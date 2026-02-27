@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ridgeback-config",
+    "crates/ridgeback-core",
+    "crates/ridgeback-plugin",
+    "crates/ridgeback-gpu",
+    "crates/ridgeback-ai",
+    "crates/ridgeback-app",
+]
+
+[workspace.dependencies]
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Error handling & logging
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Internal crates
+ridgeback-config = { path = "crates/ridgeback-config" }
+ridgeback-core = { path = "crates/ridgeback-core" }
+ridgeback-plugin = { path = "crates/ridgeback-plugin" }
+ridgeback-gpu = { path = "crates/ridgeback-gpu" }
+ridgeback-ai = { path = "crates/ridgeback-ai" }
