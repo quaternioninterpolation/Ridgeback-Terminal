@@ -106,7 +106,9 @@ impl SettingsWindow {
             self.selected_profile = profile_keys.first().cloned();
         }
 
-        ui.horizontal(|ui| {
+        let available = ui.available_size();
+
+        ui.horizontal_top(|ui| {
             // ── Left: profile list ────────────────────────────────────────
             ui.vertical(|ui| {
                 ui.set_min_width(160.0);
@@ -144,89 +146,96 @@ impl SettingsWindow {
 
             ui.separator();
 
-            // ── Right: editor ─────────────────────────────────────────────
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                let sel = self.selected_profile.clone();
-                if let Some(ref key) = sel {
-                    if let Some(profile) = self.edited_config.profiles.get_mut(key) {
-                        egui::Grid::new("profile_editor")
-                            .num_columns(2)
-                            .spacing([10.0, 8.0])
-                            .show(ui, |ui| {
-                                ui.label("Name:");
-                                ui.text_edit_singleline(&mut profile.name);
-                                ui.end_row();
+            // ── Right: editor (vertical column) ─────────────────────────
+            let right_width = (available.x - 180.0).max(300.0);
+            ui.vertical(|ui| {
+                ui.set_min_width(right_width);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        let sel = self.selected_profile.clone();
+                        if let Some(ref key) = sel {
+                            if let Some(profile) = self.edited_config.profiles.get_mut(key) {
+                                egui::Grid::new("profile_editor")
+                                    .num_columns(2)
+                                    .spacing([10.0, 8.0])
+                                    .show(ui, |ui| {
+                                        ui.label("Name:");
+                                        ui.text_edit_singleline(&mut profile.name);
+                                        ui.end_row();
 
-                                ui.label("Shell:");
-                                ui.text_edit_singleline(&mut profile.shell);
-                                ui.end_row();
+                                        ui.label("Shell:");
+                                        ui.text_edit_singleline(&mut profile.shell);
+                                        ui.end_row();
 
-                                ui.label("Args:");
-                                let mut args_str = profile.args.join(" ");
-                                if ui.text_edit_singleline(&mut args_str).changed() {
-                                    profile.args = args_str.split_whitespace().map(String::from).collect();
-                                }
-                                ui.end_row();
+                                        ui.label("Args:");
+                                        let mut args_str = profile.args.join(" ");
+                                        if ui.text_edit_singleline(&mut args_str).changed() {
+                                            profile.args = args_str.split_whitespace().map(String::from).collect();
+                                        }
+                                        ui.end_row();
 
-                                ui.label("Working Dir:");
-                                let mut wd = profile.working_directory.to_string_lossy().to_string();
-                                if ui.text_edit_singleline(&mut wd).changed() {
-                                    profile.working_directory = std::path::PathBuf::from(&wd);
-                                }
-                                ui.end_row();
+                                        ui.label("Working Dir:");
+                                        let mut wd = profile.working_directory.to_string_lossy().to_string();
+                                        if ui.text_edit_singleline(&mut wd).changed() {
+                                            profile.working_directory = std::path::PathBuf::from(&wd);
+                                        }
+                                        ui.end_row();
 
-                                ui.label("Scrollback:");
-                                ui.add(egui::DragValue::new(&mut profile.scrollback_limit).range(100..=100_000));
-                                ui.end_row();
+                                        ui.label("Scrollback:");
+                                        ui.add(egui::DragValue::new(&mut profile.scrollback_limit).range(100..=100_000));
+                                        ui.end_row();
 
-                                ui.label("Cursor Style:");
-                                egui::ComboBox::from_id_salt(format!("cursor_style_{}", key))
-                                    .selected_text(format!("{:?}", profile.cursor_style))
-                                    .show_ui(ui, |ui| {
-                                        ui.selectable_value(&mut profile.cursor_style, ridgeback_config::CursorStyle::Block, "Block");
-                                        ui.selectable_value(&mut profile.cursor_style, ridgeback_config::CursorStyle::Bar, "Bar");
-                                        ui.selectable_value(&mut profile.cursor_style, ridgeback_config::CursorStyle::Underline, "Underline");
+                                        ui.label("Cursor Style:");
+                                        egui::ComboBox::from_id_salt(format!("cursor_style_{}", key))
+                                            .selected_text(format!("{:?}", profile.cursor_style))
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut profile.cursor_style, ridgeback_config::CursorStyle::Block, "Block");
+                                                ui.selectable_value(&mut profile.cursor_style, ridgeback_config::CursorStyle::Bar, "Bar");
+                                                ui.selectable_value(&mut profile.cursor_style, ridgeback_config::CursorStyle::Underline, "Underline");
+                                            });
+                                        ui.end_row();
+
+                                        ui.label("Cursor Blink:");
+                                        ui.checkbox(&mut profile.cursor_blink, "");
+                                        ui.end_row();
+
+                                        ui.label("Text Colour:");
+                                        ui.text_edit_singleline(&mut profile.text_foreground);
+                                        ui.end_row();
+
+                                        ui.label("Text Shadow:");
+                                        ui.checkbox(&mut profile.text_shadow_enabled, "Enabled");
+                                        ui.end_row();
+
+                                        ui.label("Shadow Strength:");
+                                        ui.add(
+                                            egui::Slider::new(&mut profile.text_shadow_alpha, 0.0..=1.0)
+                                                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
+                                        );
+                                        ui.end_row();
                                     });
-                                ui.end_row();
 
-                                ui.label("Cursor Blink:");
-                                ui.checkbox(&mut profile.cursor_blink, "");
-                                ui.end_row();
+                                ui.add_space(12.0);
+                                ui.separator();
 
-                                ui.label("Text Colour:");
-                                ui.text_edit_singleline(&mut profile.text_foreground);
-                                ui.end_row();
+                                // ── Shader Effect section ─────────────────
+                                ui.collapsing("🎨 Shader Effect", |ui| {
+                                    show_shader_effect_section(ui, &mut profile.shader_effect, key, shader_host);
+                                });
 
-                                ui.label("Text Shadow:");
-                                ui.checkbox(&mut profile.text_shadow_enabled, "Enabled");
-                                ui.end_row();
+                                ui.add_space(8.0);
 
-                                ui.label("Shadow Strength:");
-                                ui.add(
-                                    egui::Slider::new(&mut profile.text_shadow_alpha, 0.0..=1.0)
-                                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
-                                );
-                                ui.end_row();
-                            });
-
-                        ui.add_space(12.0);
-
-                        // ── Shader Effect section ─────────────────────────
-                        ui.collapsing("🎨 Shader Effect", |ui| {
-                            show_shader_effect_section(ui, &mut profile.shader_effect, key, shader_host);
-                        });
-
-                        ui.add_space(8.0);
-
-                        // ── Typing Particles section ──────────────────────
-                        ui.collapsing("✨ Typing Particles", |ui| {
-                            show_typing_particles_section(ui, &mut profile.typing_particles, key, shader_host);
-                        });
-                    }
-                } else {
-                    ui.label(egui::RichText::new("Select a profile on the left to edit it.")
-                        .color(egui::Color32::from_gray(120)));
-                }
+                                // ── Typing Particles section ──────────────
+                                ui.collapsing("✨ Typing Particles", |ui| {
+                                    show_typing_particles_section(ui, &mut profile.typing_particles, key, shader_host);
+                                });
+                            }
+                        } else {
+                            ui.label(egui::RichText::new("Select a profile on the left to edit it.")
+                                .color(egui::Color32::from_gray(120)));
+                        }
+                    });
             });
         });
     }

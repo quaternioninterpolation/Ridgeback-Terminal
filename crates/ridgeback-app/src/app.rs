@@ -340,7 +340,15 @@ impl eframe::App for RidgebackApp {
         if self.settings_open {
             let mut still_open = true;
             let mut saved_keys: Vec<String> = Vec::new();
-            egui::Window::new("Settings").open(&mut still_open).resizable(true).default_size([700.0,520.0]).show(ctx, |ui| {
+            let screen_rect = ctx.screen_rect();
+            let max_w = (screen_rect.width() - 40.0).max(400.0);
+            let max_h = (screen_rect.height() - 40.0).max(300.0);
+            egui::Window::new("Settings")
+                .open(&mut still_open)
+                .resizable(true)
+                .default_size([700.0, 480.0])
+                .max_size([max_w, max_h])
+                .show(ctx, |ui| {
                 let host_guard = self.shader_host.lock().unwrap();
                 saved_keys = self.settings.show(ui, &mut self.config, &mut self.cast_manager, &host_guard);
             });
