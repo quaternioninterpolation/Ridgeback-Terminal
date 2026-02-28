@@ -18,6 +18,11 @@ const MOD: &str = "Cmd";
 #[cfg(not(target_os = "macos"))]
 const MOD: &str = "Ctrl";
 
+/// Application version.
+const VERSION: &str = "0.1";
+/// Build code derived from git commit count (set by build.rs).
+const BUILD_CODE: &str = concat!("RBTC:", env!("RIDGEBACK_COMMIT_COUNT"));
+
 pub struct RidgebackApp {
     pub config: Config,
     pub tabs: TabManager,
@@ -697,6 +702,25 @@ fn show_empty_state(ui: &mut egui::Ui, bg_texture: Option<&egui::TextureHandle>)
         ui.painter().text(egui::pos2(pos.x+1.0,pos.y+1.0),egui::Align2::CENTER_CENTER,text,egui::FontId::proportional(sz),shadow);
         ui.painter().text(pos,egui::Align2::CENTER_CENTER,text,egui::FontId::proportional(sz),fg);
     }
+
+    // Version and build code at the bottom
+    let version_text = format!("v{}  ·  {}", VERSION, BUILD_CODE);
+    let version_pos = egui::pos2(rect.center().x, rect.bottom() - 16.0);
+    ui.painter().text(
+        egui::pos2(version_pos.x + 1.0, version_pos.y + 1.0),
+        egui::Align2::CENTER_CENTER,
+        &version_text,
+        egui::FontId::proportional(11.0),
+        shadow,
+    );
+    ui.painter().text(
+        version_pos,
+        egui::Align2::CENTER_CENTER,
+        &version_text,
+        egui::FontId::proportional(11.0),
+        egui::Color32::from_gray(90),
+    );
+
     ui.allocate_rect(rect,egui::Sense::hover());
 }
 
