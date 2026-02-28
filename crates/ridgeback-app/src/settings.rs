@@ -3,6 +3,12 @@ use ridgeback_config::Config;
 use ridgeback_plugin::{ShaderPluginHost, shader_plugin::ParamType};
 use crate::casting::CastManager;
 
+/// Platform modifier key label: "Cmd" on macOS, "Ctrl" elsewhere.
+#[cfg(target_os = "macos")]
+const MOD: &str = "Cmd";
+#[cfg(not(target_os = "macos"))]
+const MOD: &str = "Ctrl";
+
 /// Settings window state.
 pub struct SettingsWindow {
     active_tab: SettingsTab,
@@ -374,7 +380,7 @@ impl SettingsWindow {
             ui.horizontal(|ui| { ui.label("Temperature:"); ui.add(egui::Slider::new(&mut ai.autocomplete.temperature, 0.0..=1.0)); });
             ui.add_space(12.0);
             ui.label(egui::RichText::new("Command Query").strong());
-            ui.checkbox(&mut ai.command_query.enabled, "Enable command query (Ctrl+/)");
+            ui.checkbox(&mut ai.command_query.enabled, format!("Enable command query ({MOD}+/)"));
             ui.horizontal(|ui| { ui.label("Max suggestions:"); ui.add(egui::Slider::new(&mut ai.command_query.max_suggestions, 1..=5)); });
             ui.horizontal(|ui| { ui.label("Temperature:"); ui.add(egui::Slider::new(&mut ai.command_query.temperature, 0.0..=1.0)); });
         }
@@ -426,7 +432,7 @@ impl SettingsWindow {
 
         ui.add_space(8.0);
         ui.label(egui::RichText::new(
-            "Press Ctrl+Shift+P to reload plugins without restarting."
+            format!("Press {MOD}+Shift+P to reload plugins without restarting.")
         ).color(egui::Color32::from_gray(140)).italics());
     }
 }

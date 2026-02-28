@@ -279,14 +279,35 @@ pub fn show_terminal(
                                         egui::Key::Escape     => { let _ = tab.terminal.write_to_pty(b"\x1b"); }
                                         egui::Key::Tab if !modifiers.shift => { let _ = tab.terminal.write_to_pty(b"\t"); }
                                         egui::Key::Tab        => { let _ = tab.terminal.write_to_pty(b"\x1b[Z"); }
-                                        // Ctrl+C: ALWAYS send SIGINT to PTY (standard terminal behaviour)
+                                        // Ctrl+C: send SIGINT to PTY (standard terminal behaviour).
+                                        // On macOS Cmd+C is used for copy instead.
                                         egui::Key::C if modifiers.ctrl && !modifiers.shift => {
+                                            // On macOS, modifiers.ctrl means the physical Ctrl key (not Cmd),
+                                            // so this is always SIGINT. On other platforms, Ctrl+C is also SIGINT
+                                            // unless Shift is held (Ctrl+Shift+C = copy).
                                             if !ctrl_chars_sent.contains(&0x03) {
                                                 let _ = tab.terminal.write_to_pty(b"\x03");
                                             }
                                             tab.terminal_selection = None;
                                         }
-                                        // Ctrl+Shift+C: copy selection or visible screen
+                                        // Copy: Cmd+C on macOS, Ctrl+Shift+C on Windows/Linux
+                                        #[cfg(target_os = "macos")]
+                                        egui::Key::C if modifiers.mac_cmd => {
+                                            if let Some(ref sel) = tab.terminal_selection {
+                                                let text = sel.selected_text(&scrollback_lines, &visible_cells);
+                                                if !text.is_empty() {
+                                                    if let Some(ref mut cb) = *clipboard { let _ = cb.set_text(text); }
+                                                }
+                                                tab.terminal_selection = None;
+                                            } else {
+                                                let lines: Vec<String> = visible_cells
+                                                    .iter()
+                                                    .map(|row| row.iter().map(|c| if c.ch == '\0' { ' ' } else { c.ch }).collect::<String>())
+                                                    .collect();
+                                                if let Some(ref mut cb) = *clipboard { let _ = cb.set_text(lines.join("\n")); }
+                                            }
+                                        }
+                                        #[cfg(not(target_os = "macos"))]
                                         egui::Key::C if modifiers.ctrl && modifiers.shift => {
                                             if let Some(ref sel) = tab.terminal_selection {
                                                 let text = sel.selected_text(&scrollback_lines, &visible_cells);
@@ -310,6 +331,16 @@ pub fn show_terminal(
                                         egui::Key::E if modifiers.ctrl => { if !ctrl_chars_sent.contains(&0x05) { let _ = tab.terminal.write_to_pty(b"\x05"); } }
                                         egui::Key::K if modifiers.ctrl => { if !ctrl_chars_sent.contains(&0x0b) { let _ = tab.terminal.write_to_pty(b"\x0b"); } }
                                         egui::Key::W if modifiers.ctrl => { if !ctrl_chars_sent.contains(&0x17) { let _ = tab.terminal.write_to_pty(b"\x17"); } }
+                                        // Paste: Cmd+V on macOS, Ctrl+V on other platforms
+                                        #[cfg(target_os = "macos")]
+                                        egui::Key::V if modifiers.mac_cmd => {
+                                            if !paste_handled {
+                                                if let Some(ref mut cb) = *clipboard {
+                                                    if let Ok(text) = cb.get_text() { let _ = tab.terminal.write_to_pty(text.as_bytes()); }
+                                                }
+                                            }
+                                        }
+                                        #[cfg(not(target_os = "macos"))]
                                         egui::Key::V if modifiers.ctrl => {
                                             if !paste_handled {
                                                 if let Some(ref mut cb) = *clipboard {
@@ -323,10 +354,15 @@ pub fn show_terminal(
                                 // egui may convert Ctrl+C/X/V into these events instead
                                 // of (or in addition to) Event::Key on some platforms.
                                 egui::Event::Copy => {
-                                    // Check if Shift is held: Ctrl+Shift+C = copy, Ctrl+C = SIGINT
-                                    let shift_held = ui.ctx().input(|i| i.modifiers.shift);
-                                    if shift_held {
-                                        // Ctrl+Shift+C: copy selection or visible screen
+                                    // On macOS, Cmd+C triggers Copy event — always copy.
+                                    // On other platforms, Ctrl+C triggers Copy — only copy if Shift held,
+                                    // otherwise it's SIGINT.
+                                    #[cfg(target_os = "macos")]
+                                    let should_copy = true;
+                                    #[cfg(not(target_os = "macos"))]
+                                    let should_copy = ui.ctx().input(|i| i.modifiers.shift);
+
+                                    if should_copy {
                                         if let Some(ref sel) = tab.terminal_selection {
                                             let text = sel.selected_text(&scrollback_lines, &visible_cells);
                                             if !text.is_empty() {

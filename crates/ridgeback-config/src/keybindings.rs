@@ -32,23 +32,29 @@ pub struct KeyBindings {
 
 impl Default for KeyBindings {
     fn default() -> Self {
+        // Use Cmd on macOS, Ctrl on other platforms
+        #[cfg(target_os = "macos")]
+        const MOD: &str = "Cmd";
+        #[cfg(not(target_os = "macos"))]
+        const MOD: &str = "Ctrl";
+
         Self {
-            new_tab: "Ctrl+T".to_string(),
-            close_tab: "Ctrl+W".to_string(),
-            next_tab: "Ctrl+Tab".to_string(),
-            prev_tab: "Ctrl+Shift+Tab".to_string(),
-            open_settings: "Ctrl+,".to_string(),
-            save_session: "Ctrl+S".to_string(),
-            find_in_session: "Ctrl+F".to_string(),
-            ai_command_query: "Ctrl+/".to_string(),
-            split_horizontal: "Ctrl+Shift+D".to_string(),
-            split_vertical: "Ctrl+Shift+E".to_string(),
-            close_pane: "Ctrl+Shift+W".to_string(),
-            reload_plugins: "Ctrl+Shift+P".to_string(),
-            focus_next_group: "Ctrl+Alt+Right".to_string(),
-            focus_prev_group: "Ctrl+Alt+Left".to_string(),
-            move_tab_to_next_group: "Ctrl+Alt+Shift+Right".to_string(),
-            move_tab_to_prev_group: "Ctrl+Alt+Shift+Left".to_string(),
+            new_tab: format!("{MOD}+T"),
+            close_tab: format!("{MOD}+W"),
+            next_tab: format!("{MOD}+Tab"),
+            prev_tab: format!("{MOD}+Shift+Tab"),
+            open_settings: format!("{MOD}+,"),
+            save_session: format!("{MOD}+S"),
+            find_in_session: format!("{MOD}+F"),
+            ai_command_query: format!("{MOD}+/"),
+            split_horizontal: format!("{MOD}+Shift+D"),
+            split_vertical: format!("{MOD}+Shift+E"),
+            close_pane: format!("{MOD}+Shift+W"),
+            reload_plugins: format!("{MOD}+Shift+P"),
+            focus_next_group: format!("{MOD}+Alt+Right"),
+            focus_prev_group: format!("{MOD}+Alt+Left"),
+            move_tab_to_next_group: format!("{MOD}+Alt+Shift+Right"),
+            move_tab_to_prev_group: format!("{MOD}+Alt+Shift+Left"),
         }
     }
 }

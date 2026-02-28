@@ -8,7 +8,7 @@ Ridgeback is configured through a single TOML file. The location is platform-dep
 | macOS | `~/Library/Application Support/Ridgeback/config.toml` |
 | Linux | `~/.config/ridgeback/config.toml` |
 
-You can also edit settings visually via **Ctrl+,** inside the app.
+You can also edit settings visually via **Cmd+,** (macOS) or **Ctrl+,** (Windows/Linux) inside the app.
 
 ---
 
@@ -157,54 +157,55 @@ Only the parameters matching the active `shader_effect` have any effect. See [do
 
 ## Keybindings
 
-All keyboard shortcuts are customizable. Use modifier names (`Ctrl`, `Shift`, `Alt`) joined with `+` and ending with the key name.
+All keyboard shortcuts are customizable. Use modifier names (`Ctrl`, `Cmd`, `Shift`, `Alt`) joined with `+` and ending with the key name. Both `Ctrl` and `Cmd` map to the platform command key — **Cmd (⌘)** on macOS, **Ctrl** on Windows/Linux.
 
 ```toml
 [keybindings]
-new_tab = "Ctrl+T"
-close_tab = "Ctrl+W"
-next_tab = "Ctrl+Tab"
-prev_tab = "Ctrl+Shift+Tab"
-open_settings = "Ctrl+,"
-save_session = "Ctrl+S"
-find_in_session = "Ctrl+F"
-ai_command_query = "Ctrl+/"
-split_horizontal = "Ctrl+Shift+D"
-split_vertical = "Ctrl+Shift+E"
-close_pane = "Ctrl+Shift+W"
-reload_plugins = "Ctrl+Shift+P"
-focus_next_group = "Ctrl+Alt+Right"
-focus_prev_group = "Ctrl+Alt+Left"
-move_tab_to_next_group = "Ctrl+Alt+Shift+Right"
-move_tab_to_prev_group = "Ctrl+Alt+Shift+Left"
+# macOS defaults use Cmd; Windows/Linux defaults use Ctrl
+new_tab = "Cmd+T"              # or "Ctrl+T" on Windows/Linux
+close_tab = "Cmd+W"
+next_tab = "Cmd+Tab"
+prev_tab = "Cmd+Shift+Tab"
+open_settings = "Cmd+,"
+save_session = "Cmd+S"
+find_in_session = "Cmd+F"
+ai_command_query = "Cmd+/"
+split_horizontal = "Cmd+Shift+D"
+split_vertical = "Cmd+Shift+E"
+close_pane = "Cmd+Shift+W"
+reload_plugins = "Cmd+Shift+P"
+focus_next_group = "Cmd+Alt+Right"
+focus_prev_group = "Cmd+Alt+Left"
+move_tab_to_next_group = "Cmd+Alt+Shift+Right"
+move_tab_to_prev_group = "Cmd+Alt+Shift+Left"
 ```
 
-| Action | Default | Description |
+| Action | Default (macOS / Other) | Description |
 |---|---|---|
-| `new_tab` | `Ctrl+T` | Open a new tab in the focused group |
-| `close_tab` | `Ctrl+W` | Close the active tab |
-| `next_tab` | `Ctrl+Tab` | Switch to the next tab within the group |
-| `prev_tab` | `Ctrl+Shift+Tab` | Switch to the previous tab within the group |
-| `open_settings` | `Ctrl+,` | Toggle the settings window |
-| `save_session` | `Ctrl+S` | Save the current session's output to a file |
-| `find_in_session` | `Ctrl+F` | Open the find-in-session overlay |
-| `ai_command_query` | `Ctrl+/` | Open the AI command query overlay |
-| `split_horizontal` | `Ctrl+Shift+D` | Split right — create a new tab group beside the current one |
-| `split_vertical` | `Ctrl+Shift+E` | Split down — create a new tab group below the current one |
-| `close_pane` | `Ctrl+Shift+W` | Close the entire focused tab group |
-| `reload_plugins` | `Ctrl+Shift+P` | Reload all Lua plugins without restarting |
-| `focus_next_group` | `Ctrl+Alt+Right` | Move focus to the next tab group |
-| `focus_prev_group` | `Ctrl+Alt+Left` | Move focus to the previous tab group |
-| `move_tab_to_next_group` | `Ctrl+Alt+Shift+Right` | Move the active tab to the next group |
-| `move_tab_to_prev_group` | `Ctrl+Alt+Shift+Left` | Move the active tab to the previous group |
+| `new_tab` | `Cmd+T` / `Ctrl+T` | Open a new tab in the focused group |
+| `close_tab` | `Cmd+W` / `Ctrl+W` | Close the active tab |
+| `next_tab` | `Cmd+Tab` / `Ctrl+Tab` | Switch to the next tab within the group |
+| `prev_tab` | `Cmd+Shift+Tab` / `Ctrl+Shift+Tab` | Switch to the previous tab within the group |
+| `open_settings` | `Cmd+,` / `Ctrl+,` | Toggle the settings window |
+| `save_session` | `Cmd+S` / `Ctrl+S` | Save the current session's output to a file |
+| `find_in_session` | `Cmd+F` / `Ctrl+F` | Open the find-in-session overlay |
+| `ai_command_query` | `Cmd+/` / `Ctrl+/` | Open the AI command query overlay |
+| `split_horizontal` | `Cmd+Shift+D` / `Ctrl+Shift+D` | Split right — create a new tab group beside the current one |
+| `split_vertical` | `Cmd+Shift+E` / `Ctrl+Shift+E` | Split down — create a new tab group below the current one |
+| `close_pane` | `Cmd+Shift+W` / `Ctrl+Shift+W` | Close the entire focused tab group |
+| `reload_plugins` | `Cmd+Shift+P` / `Ctrl+Shift+P` | Reload all Lua plugins without restarting |
+| `focus_next_group` | `Cmd+Alt+Right` / `Ctrl+Alt+Right` | Move focus to the next tab group |
+| `focus_prev_group` | `Cmd+Alt+Left` / `Ctrl+Alt+Left` | Move focus to the previous tab group |
+| `move_tab_to_next_group` | `Cmd+Alt+Shift+Right` / `Ctrl+Alt+Shift+Right` | Move the active tab to the next group |
+| `move_tab_to_prev_group` | `Cmd+Alt+Shift+Left` / `Ctrl+Alt+Shift+Left` | Move the active tab to the previous group |
 
 ### Key Names
 
 Supported key names: `A`–`Z`, `0`–`9`, `Tab`, `Enter`, `Escape`, `Backspace`, `Delete`, `Home`, `End`, `PageUp`, `PageDown`, `Up`, `Down`, `Left`, `Right`, `Space`, `/`, `,`, `.`
 
-Modifier names: `Ctrl`, `Shift`, `Alt`
+Modifier names: `Ctrl`, `Cmd`, `Shift`, `Alt` (`Ctrl` and `Cmd` are interchangeable — both map to the platform command key)
 
-Built-in shortcuts (not rebindable): `Ctrl+C` (copy/interrupt), `Ctrl+V` (paste), `Ctrl+Z` (undo), `Ctrl+Shift+Z` (redo), `Ctrl+A` (select all in input), `Tab` (accept ghost text).
+Built-in shortcuts (not rebindable): `Cmd+C` / `Ctrl+C` (copy/interrupt), `Cmd+V` / `Ctrl+V` (paste), `Cmd+Z` / `Ctrl+Z` (undo), `Cmd+Shift+Z` / `Ctrl+Shift+Z` (redo), `Cmd+A` / `Ctrl+A` (select all in input), `Tab` (accept ghost text).
 
 ---
 
@@ -248,7 +249,7 @@ context_lines = 10                    # Number of recent terminal output lines s
 
 ### Command Query
 
-Press **Ctrl+/** to open the command query overlay. Type a natural-language description of what you want to do, and the AI returns one or more suggested commands.
+Press **Cmd+/** (macOS) or **Ctrl+/** (Windows/Linux) to open the command query overlay. Type a natural-language description of what you want to do, and the AI returns one or more suggested commands.
 
 ```toml
 [ai.command_query]
@@ -323,22 +324,23 @@ max_shader_fps = 144
 battery_aware = true
 
 [keybindings]
-new_tab = "Ctrl+T"
-close_tab = "Ctrl+W"
-next_tab = "Ctrl+Tab"
-prev_tab = "Ctrl+Shift+Tab"
-open_settings = "Ctrl+,"
-save_session = "Ctrl+S"
-find_in_session = "Ctrl+F"
-ai_command_query = "Ctrl+/"
-split_horizontal = "Ctrl+Shift+D"
-split_vertical = "Ctrl+Shift+E"
-close_pane = "Ctrl+Shift+W"
-reload_plugins = "Ctrl+Shift+P"
-focus_next_group = "Ctrl+Alt+Right"
-focus_prev_group = "Ctrl+Alt+Left"
-move_tab_to_next_group = "Ctrl+Alt+Shift+Right"
-move_tab_to_prev_group = "Ctrl+Alt+Shift+Left"
+# Use "Cmd" on macOS, "Ctrl" on Windows/Linux (both are accepted)
+new_tab = "Cmd+T"
+close_tab = "Cmd+W"
+next_tab = "Cmd+Tab"
+prev_tab = "Cmd+Shift+Tab"
+open_settings = "Cmd+,"
+save_session = "Cmd+S"
+find_in_session = "Cmd+F"
+ai_command_query = "Cmd+/"
+split_horizontal = "Cmd+Shift+D"
+split_vertical = "Cmd+Shift+E"
+close_pane = "Cmd+Shift+W"
+reload_plugins = "Cmd+Shift+P"
+focus_next_group = "Cmd+Alt+Right"
+focus_prev_group = "Cmd+Alt+Left"
+move_tab_to_next_group = "Cmd+Alt+Shift+Right"
+move_tab_to_prev_group = "Cmd+Alt+Shift+Left"
 
 [ai]
 enabled = true

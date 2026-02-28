@@ -7,11 +7,12 @@ pub struct ShortcutManager {
     bindings: Vec<(ShortcutAction, KeyCombo)>,
 }
 
-/// A parsed key combination (e.g., Ctrl+Shift+T).
+/// A parsed key combination (e.g., Ctrl+Shift+T / Cmd+Shift+T).
 #[derive(Debug, Clone)]
 struct KeyCombo {
     key: egui::Key,
-    ctrl: bool,
+    /// Platform command key: Cmd on macOS, Ctrl on Windows/Linux.
+    command: bool,
     shift: bool,
     alt: bool,
 }
@@ -54,7 +55,8 @@ impl ShortcutManager {
     pub fn check(&self, ctx: &egui::Context) -> Option<ShortcutAction> {
         ctx.input(|input| {
             for (action, combo) in &self.bindings {
-                let modifiers_match = input.modifiers.ctrl == combo.ctrl
+                // Use `command` which maps to Cmd on macOS, Ctrl on Windows/Linux
+                let modifiers_match = input.modifiers.command == combo.command
                     && input.modifiers.shift == combo.shift
                     && input.modifiers.alt == combo.alt;
 
@@ -69,14 +71,14 @@ impl ShortcutManager {
 
 fn parse_key_combo(s: &str) -> Option<KeyCombo> {
     let parts: Vec<&str> = s.split('+').map(|p| p.trim()).collect();
-    let mut ctrl = false;
+    let mut command = false;
     let mut shift = false;
     let mut alt = false;
     let mut key = None;
 
     for part in parts {
         match part.to_lowercase().as_str() {
-            "ctrl" | "cmd" => ctrl = true,
+            "ctrl" | "cmd" => command = true,
             "shift" => shift = true,
             "alt" => alt = true,
             "tab" => key = Some(egui::Key::Tab),
@@ -108,7 +110,7 @@ fn parse_key_combo(s: &str) -> Option<KeyCombo> {
 
     key.map(|k| KeyCombo {
         key: k,
-        ctrl,
+        command,
         shift,
         alt,
     })

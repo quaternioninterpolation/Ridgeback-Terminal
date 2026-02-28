@@ -11,6 +11,13 @@ use crate::toast::{Toast, ToastManager};
 use crate::split_pane::SplitPaneManager;
 use crate::tab_drag::TabDragState;
 use crate::group_tab_bar::{self, TabBarAction};
+
+/// Platform modifier key label: "Cmd" on macOS, "Ctrl" elsewhere.
+#[cfg(target_os = "macos")]
+const MOD: &str = "Cmd";
+#[cfg(not(target_os = "macos"))]
+const MOD: &str = "Ctrl";
+
 pub struct RidgebackApp {
     pub config: Config,
     pub tabs: TabManager,
@@ -618,7 +625,7 @@ impl RidgebackApp {
             if nr.secondary_clicked() {
                 ui.memory_mut(|m| m.toggle_popup(nr.id));
             }
-            let nr = nr.on_hover_text("New Tab (Ctrl+T) · Right-click for profile picker");
+            let nr = nr.on_hover_text(format!("New Tab ({MOD}+T) · Right-click for profile picker"));
             egui::popup_below_widget(ui, nr.id, &nr, egui::PopupCloseBehavior::CloseOnClickOutside, |ui: &mut egui::Ui| {
                 ui.set_min_width(160.0);
                 let profiles: Vec<(String, ridgeback_config::Profile)> = self.config.profiles.iter().map(|(k,v)|(k.clone(),v.clone())).collect();
@@ -638,7 +645,7 @@ impl RidgebackApp {
                 .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
                 .min_size(egui::vec2(28.0, 28.0)));
             if sh.clicked() { self.handle_shortcut(ui.ctx(), ShortcutAction::SplitHorizontal); }
-            sh.on_hover_text("Split Right (Ctrl+Shift+D)");
+            sh.on_hover_text(format!("Split Right ({MOD}+Shift+D)"));
 
             // Split vertical
             let sv = ui.add(egui::Button::new(
@@ -647,7 +654,7 @@ impl RidgebackApp {
                 .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
                 .min_size(egui::vec2(28.0, 28.0)));
             if sv.clicked() { self.handle_shortcut(ui.ctx(), ShortcutAction::SplitVertical); }
-            sv.on_hover_text("Split Down (Ctrl+Shift+E)");
+            sv.on_hover_text(format!("Split Down ({MOD}+Shift+E)"));
 
             // Settings gear (right-aligned)
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -661,7 +668,7 @@ impl RidgebackApp {
                     self.settings_open = !self.settings_open;
                     if self.settings_open { self.settings.set_focused_profile(key.as_deref()); }
                 }
-                gr.on_hover_text("Settings (Ctrl+,)");
+                gr.on_hover_text(format!("Settings ({MOD}+,)"));
             });
         });
     }
@@ -681,9 +688,10 @@ fn show_empty_state(ui: &mut egui::Ui, bg_texture: Option<&egui::TextureHandle>)
     }
     let c=rect.center();
     let shadow=egui::Color32::from_black_alpha(180);
+    let split_hint = format!("{MOD}+T  /  {MOD}+Shift+D/E to split");
     for (dy,text,sz,fg) in [
         (0.0f32, "Open a new terminal tab", 20.0f32, egui::Color32::from_gray(220)),
-        (34.0,   "Ctrl+T  /  Ctrl+Shift+D/E to split", 13.0, egui::Color32::from_gray(140)),
+        (34.0,   split_hint.as_str(), 13.0, egui::Color32::from_gray(140)),
     ] {
         let pos=egui::pos2(c.x,c.y+dy);
         ui.painter().text(egui::pos2(pos.x+1.0,pos.y+1.0),egui::Align2::CENTER_CENTER,text,egui::FontId::proportional(sz),shadow);
