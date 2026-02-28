@@ -218,6 +218,8 @@ pub fn show_terminal(
                         // Track which Ctrl+letter control codes we already forwarded via
                         // Event::Text so we don't double-send them from Event::Key.
                         let mut ctrl_chars_sent: Vec<u8> = Vec::new();
+                        let mut paste_handled = false;
+
                         for ev in &events {
                             match ev {
                                 egui::Event::Text(t) => {
@@ -309,12 +311,33 @@ pub fn show_terminal(
                                         egui::Key::K if modifiers.ctrl => { if !ctrl_chars_sent.contains(&0x0b) { let _ = tab.terminal.write_to_pty(b"\x0b"); } }
                                         egui::Key::W if modifiers.ctrl => { if !ctrl_chars_sent.contains(&0x17) { let _ = tab.terminal.write_to_pty(b"\x17"); } }
                                         egui::Key::V if modifiers.ctrl => {
-                                            if let Some(ref mut cb) = *clipboard {
-                                                if let Ok(text) = cb.get_text() { let _ = tab.terminal.write_to_pty(text.as_bytes()); }
+                                            if !paste_handled {
+                                                if let Some(ref mut cb) = *clipboard {
+                                                    if let Ok(text) = cb.get_text() { let _ = tab.terminal.write_to_pty(text.as_bytes()); }
+                                                }
                                             }
                                         }
                                         _ => {}
                                     }
+                                }
+                                // egui may convert Ctrl+C/X/V into these events instead
+                                // of (or in addition to) Event::Key on some platforms.
+                                egui::Event::Copy => {
+                                    // Ctrl+C in a terminal must send SIGINT, not copy.
+                                    if !ctrl_chars_sent.contains(&0x03) {
+                                        let _ = tab.terminal.write_to_pty(b"\x03");
+                                        ctrl_chars_sent.push(0x03);
+                                    }
+                                    tab.terminal_selection = None;
+                                }
+                                egui::Event::Cut => {
+                                    // Ctrl+X → send \x18 to PTY
+                                    let _ = tab.terminal.write_to_pty(b"\x18");
+                                }
+                                egui::Event::Paste(text) => {
+                                    // Ctrl+V → paste into PTY
+                                    let _ = tab.terminal.write_to_pty(text.as_bytes());
+                                    paste_handled = true;
                                 }
                                 _ => {}
                             }
