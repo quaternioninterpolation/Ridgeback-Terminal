@@ -32,6 +32,7 @@ pub fn draw_group_tab_bar(
     drag_state: &TabDragState,
     is_focused: bool,
     profile_names: &[(String, String)], // (key, display_name) pairs
+    preferred_profile_key: Option<&str>, // last-opened or default profile key
 ) -> Vec<TabBarAction> {
     let mut actions = Vec::new();
 
@@ -307,14 +308,19 @@ pub fn draw_group_tab_bar(
         plus_color,
     );
     if pr.clicked() {
-        if profile_names.len() == 1 {
-            // Only one profile — open directly without popup
-            actions.push(TabBarAction::NewTab { profile_key: profile_names[0].0.clone() });
-        } else {
-            ui.memory_mut(|m| m.toggle_popup(pr.id));
+        // Left-click: open preferred profile directly (last-opened or default)
+        let key = preferred_profile_key
+            .and_then(|k| profile_names.iter().find(|(pk, _)| pk == k).map(|(pk, _)| pk.clone()))
+            .or_else(|| profile_names.first().map(|(k, _)| k.clone()));
+        if let Some(key) = key {
+            actions.push(TabBarAction::NewTab { profile_key: key });
         }
     }
-    if profile_names.len() > 1 {
+    if pr.secondary_clicked() {
+        // Right-click: show profile picker popup
+        ui.memory_mut(|m| m.toggle_popup(pr.id));
+    }
+    if !profile_names.is_empty() {
         egui::popup_below_widget(
             ui,
             pr.id,

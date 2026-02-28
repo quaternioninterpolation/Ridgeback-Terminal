@@ -26,6 +26,8 @@ pub struct RidgebackApp {
     pub split_panes: SplitPaneManager,
     pub tab_drag: TabDragState,
     pub focused_profile_key: Option<String>,
+    /// Profile key of the most recently opened tab (used as default for new-tab actions).
+    pub last_opened_profile: Option<String>,
 }
 impl RidgebackApp {
     pub fn new(config: Config) -> Self {
@@ -34,9 +36,13 @@ impl RidgebackApp {
         let mut tabs = TabManager::new();
 
         // Create the initial group with the default profile
+        let mut initial_profile_key: Option<String> = None;
         let initial_group_id = if let Some((name, profile)) = config.default_profile() {
             match tabs.new_group_with_tab(name, profile) {
-                Ok(id) => id,
+                Ok(id) => {
+                    initial_profile_key = Some(name.to_string());
+                    id
+                }
                 Err(e) => {
                     tracing::error!("Failed to open default tab: {}", e);
                     tabs.new_group()
@@ -67,15 +73,33 @@ impl RidgebackApp {
             split_panes: SplitPaneManager::new(initial_group_id),
             tab_drag: TabDragState::default(),
             focused_profile_key: None,
+            last_opened_profile: initial_profile_key,
         }
+    }
+
+    /// Returns the preferred profile for new-tab actions: last-opened if valid,
+    /// otherwise the configured default, otherwise the first available.
+    fn preferred_profile(&self) -> Option<(String, ridgeback_config::Profile)> {
+        // 1. Last opened profile
+        if let Some(key) = &self.last_opened_profile {
+            if let Some(p) = self.config.profiles.get(key) {
+                return Some((key.clone(), p.clone()));
+            }
+        }
+        // 2. Configured default profile
+        if let Some((name, p)) = self.config.default_profile() {
+            return Some((name.to_string(), p.clone()));
+        }
+        // 3. First available
+        self.config.profiles.iter().next().map(|(k, v)| (k.clone(), v.clone()))
     }
 
     fn handle_shortcut(&mut self, ctx: &egui::Context, action: ShortcutAction) {
         match action {
             ShortcutAction::NewTab => {
-                let first = self.config.profiles.iter().next().map(|(k,v)|(k.clone(),v.clone()));
-                if let Some((name, profile)) = first {
+                if let Some((name, profile)) = self.preferred_profile() {
                     let _ = self.tabs.open_tab_in_focused(&name, &profile);
+                    self.last_opened_profile = Some(name);
                 }
                 self.focus_active_terminal(ctx);
             }
@@ -110,21 +134,21 @@ impl RidgebackApp {
                 if let Some(t) = self.tabs.active_tab_mut() { t.command_query.toggle(); }
             }
             ShortcutAction::SplitHorizontal => {
-                let first = self.config.profiles.iter().next().map(|(k,v)|(k.clone(),v.clone()));
-                if let Some((name, profile)) = first {
+                if let Some((name, profile)) = self.preferred_profile() {
                     if let Ok(new_id) = self.tabs.new_group_with_tab(&name, &profile) {
                         self.split_panes.split_horizontal(new_id);
                         self.tabs.set_focused_group(new_id);
+                        self.last_opened_profile = Some(name);
                     }
                 }
                 self.focus_active_terminal(ctx);
             }
             ShortcutAction::SplitVertical => {
-                let first = self.config.profiles.iter().next().map(|(k,v)|(k.clone(),v.clone()));
-                if let Some((name, profile)) = first {
+                if let Some((name, profile)) = self.preferred_profile() {
                     if let Ok(new_id) = self.tabs.new_group_with_tab(&name, &profile) {
                         self.split_panes.split_vertical(new_id);
                         self.tabs.set_focused_group(new_id);
+                        self.last_opened_profile = Some(name);
                     }
                 }
                 self.focus_active_terminal(ctx);
@@ -254,6 +278,7 @@ impl RidgebackApp {
                         if let Some(g) = self.tabs.group_by_id_mut(group_id) {
                             let _ = g.open_tab(&profile_key, &profile);
                         }
+                        self.last_opened_profile = Some(profile_key);
                     }
                     self.tabs.set_focused_group(group_id);
                     self.split_panes.set_focused_group(group_id);
@@ -392,17 +417,21 @@ impl eframe::App for RidgebackApp {
                     let bg_tex = self.bg_texture.clone();
                     let allow_repaint = window_focused || update_in_bg;
                     let available = ui.available_rect_before_wrap();
+
+                    // Pre-compute profile names list for tab bar + buttons
+                    let profile_names: Vec<(String, String)> = self.config.profiles.iter()
+                        .map(|(k, v)| (k.clone(), v.name.clone()))
+                        .collect();
+
+                    // Preferred profile key for left-click new-tab (last-opened or default)
+                    let preferred_key: Option<String> = self.preferred_profile().map(|(k, _)| k);
+
                     let clipboard = &mut self.clipboard as *mut _;
                     let focused_profile = &mut self.focused_profile_key;
                     let tabs_ptr = &mut self.tabs as *mut TabManager;
                     let ai_service = &self.ai_service;
                     let tab_drag = &self.tab_drag;
                     let config_ptr = &self.config as *const Config;
-
-                    // Pre-compute profile names list for tab bar + buttons
-                    let profile_names: Vec<(String, String)> = self.config.profiles.iter()
-                        .map(|(k, v)| (k.clone(), v.name.clone()))
-                        .collect();
 
                     // Collect actions from tab bars to process after rendering
                     let mut deferred_actions: Vec<(usize, Vec<TabBarAction>)> = Vec::new();
@@ -429,7 +458,7 @@ impl eframe::App for RidgebackApp {
                         if let Some(group) = tabs.group_by_id(group_id) {
                             // Draw the group's tab bar header
                             let actions = group_tab_bar::draw_group_tab_bar(
-                                ui, header_rect, group, tab_drag, is_focused, &profile_names,
+                                ui, header_rect, group, tab_drag, is_focused, &profile_names, preferred_key.as_deref(),
                             );
                             if !actions.is_empty() {
                                 deferred_actions.push((group_id, actions));
@@ -578,14 +607,25 @@ impl RidgebackApp {
             let nr = ui.add(egui::Button::new(
                 egui::RichText::new(egui_phosphor::regular::PLUS).size(16.0).color(egui::Color32::from_gray(200)))
                 .fill(egui::Color32::from_gray(28)).stroke(egui::Stroke::NONE).min_size(egui::vec2(28.0, 28.0)));
-            if nr.clicked() { ui.memory_mut(|m| m.toggle_popup(nr.id)); }
-            let nr = nr.on_hover_text("New Tab (Ctrl+T)");
+            // Left-click: open preferred (last-opened / default) profile directly
+            if nr.clicked() {
+                if let Some((name, profile)) = self.preferred_profile() {
+                    let _ = self.tabs.open_tab_in_focused(&name, &profile);
+                    self.last_opened_profile = Some(name);
+                }
+            }
+            // Right-click or secondary-click: show profile picker popup
+            if nr.secondary_clicked() {
+                ui.memory_mut(|m| m.toggle_popup(nr.id));
+            }
+            let nr = nr.on_hover_text("New Tab (Ctrl+T) · Right-click for profile picker");
             egui::popup_below_widget(ui, nr.id, &nr, egui::PopupCloseBehavior::CloseOnClickOutside, |ui: &mut egui::Ui| {
                 ui.set_min_width(160.0);
                 let profiles: Vec<(String, ridgeback_config::Profile)> = self.config.profiles.iter().map(|(k,v)|(k.clone(),v.clone())).collect();
                 for (name, profile) in profiles {
                     if ui.button(&profile.name).clicked() {
                         let _ = self.tabs.open_tab_in_focused(&name, &profile);
+                        self.last_opened_profile = Some(name);
                         ui.memory_mut(|m| m.close_popup());
                     }
                 }
