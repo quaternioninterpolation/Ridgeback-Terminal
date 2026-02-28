@@ -1,4 +1,4 @@
-﻿use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex};
 use egui;
 use ridgeback_config::{Config, keybindings::ShortcutAction};
 use ridgeback_plugin::ShaderPluginHost;
@@ -343,16 +343,25 @@ impl eframe::App for RidgebackApp {
             let screen_rect = ctx.screen_rect();
             let max_w = (screen_rect.width() - 40.0).max(400.0);
             let max_h = (screen_rect.height() - 40.0).max(300.0);
+            let default_w = 700.0_f32.min(max_w);
+            let default_h = 480.0_f32.min(max_h);
+
             egui::Window::new("Settings")
                 .open(&mut still_open)
                 .resizable(true)
-                .default_size([700.0, 480.0])
+                .constrain(true)
+                .scroll(false)
+                .default_size([default_w, default_h])
+                .min_size([400.0, 300.0])
                 .max_size([max_w, max_h])
                 .show(ctx, |ui| {
                 let host_guard = self.shader_host.lock().unwrap();
                 saved_keys = self.settings.show(ui, &mut self.config, &mut self.cast_manager, &host_guard);
             });
-            if !still_open { self.settings_open = false; }
+
+            if !still_open {
+                self.settings_open = false;
+            }
             for key in &saved_keys {
                 if let Some(profile) = self.config.profiles.get(key).cloned() {
                     let mut updated = false;

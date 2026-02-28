@@ -62,14 +62,31 @@ impl SettingsWindow {
         });
         ui.separator();
 
-        match self.active_tab {
-            SettingsTab::Profiles => self.show_profiles(ui, config, shader_host),
-            SettingsTab::Shortcuts => self.show_shortcuts(ui, config),
-            SettingsTab::Rendering => self.show_rendering(ui, config),
-            SettingsTab::Ai => self.show_ai(ui, config),
-            SettingsTab::Plugins => self.show_plugins(ui, shader_host),
-            SettingsTab::CastShare => crate::casting::show_cast_panel(ui, cast_manager),
-        }
+        // Reserve fixed space for the bottom Save/Reset bar.
+        let bottom_bar_height = 36.0;
+        let scroll_height = (ui.available_height() - bottom_bar_height).max(100.0);
+
+        // Allocate a fixed-size rect for the scrollable body.
+        // This prevents any content inside from influencing the parent size.
+        let (body_rect, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), scroll_height),
+            egui::Sense::hover(),
+        );
+
+        // Render tab content inside a child UI pinned to body_rect.
+        let mut body_ui = ui.new_child(egui::UiBuilder::new().max_rect(body_rect));
+        egui::ScrollArea::vertical()
+            .max_height(scroll_height)
+            .show(&mut body_ui, |ui| {
+                match self.active_tab {
+                    SettingsTab::Profiles => self.show_profiles(ui, config, shader_host),
+                    SettingsTab::Shortcuts => self.show_shortcuts(ui, config),
+                    SettingsTab::Rendering => self.show_rendering(ui, config),
+                    SettingsTab::Ai => self.show_ai(ui, config),
+                    SettingsTab::Plugins => self.show_plugins(ui, shader_host),
+                    SettingsTab::CastShare => crate::casting::show_cast_panel(ui, cast_manager),
+                }
+            });
 
         ui.separator();
         ui.horizontal(|ui| {
@@ -106,10 +123,8 @@ impl SettingsWindow {
             self.selected_profile = profile_keys.first().cloned();
         }
 
-        let available = ui.available_size();
-
         ui.horizontal_top(|ui| {
-            // ── Left: profile list ────────────────────────────────────────
+            // ── Left: profile list (fixed 160px) ─────────────────────────
             ui.vertical(|ui| {
                 ui.set_min_width(160.0);
                 ui.set_max_width(160.0);
@@ -146,12 +161,11 @@ impl SettingsWindow {
 
             ui.separator();
 
-            // ── Right: editor (vertical column) ─────────────────────────
-            let right_width = (available.x - 180.0).max(300.0);
+            // ── Right: editor ────────────────────────────────────────────
+            // No width forcing — the parent rect is already hard-constrained
+            // by allocate_exact_size, so available_width can never grow.
             ui.vertical(|ui| {
-                ui.set_min_width(right_width);
                 egui::ScrollArea::vertical()
-                    .auto_shrink([false, true])
                     .show(ui, |ui| {
                         let sel = self.selected_profile.clone();
                         if let Some(ref key) = sel {
