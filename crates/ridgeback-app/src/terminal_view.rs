@@ -323,12 +323,31 @@ pub fn show_terminal(
                                 // egui may convert Ctrl+C/X/V into these events instead
                                 // of (or in addition to) Event::Key on some platforms.
                                 egui::Event::Copy => {
-                                    // Ctrl+C in a terminal must send SIGINT, not copy.
-                                    if !ctrl_chars_sent.contains(&0x03) {
-                                        let _ = tab.terminal.write_to_pty(b"\x03");
-                                        ctrl_chars_sent.push(0x03);
+                                    // Check if Shift is held: Ctrl+Shift+C = copy, Ctrl+C = SIGINT
+                                    let shift_held = ui.ctx().input(|i| i.modifiers.shift);
+                                    if shift_held {
+                                        // Ctrl+Shift+C: copy selection or visible screen
+                                        if let Some(ref sel) = tab.terminal_selection {
+                                            let text = sel.selected_text(&scrollback_lines, &visible_cells);
+                                            if !text.is_empty() {
+                                                if let Some(ref mut cb) = *clipboard { let _ = cb.set_text(text); }
+                                            }
+                                            tab.terminal_selection = None;
+                                        } else {
+                                            let lines: Vec<String> = visible_cells
+                                                .iter()
+                                                .map(|row| row.iter().map(|c| if c.ch == '\0' { ' ' } else { c.ch }).collect::<String>())
+                                                .collect();
+                                            if let Some(ref mut cb) = *clipboard { let _ = cb.set_text(lines.join("\n")); }
+                                        }
+                                    } else {
+                                        // Ctrl+C: send SIGINT to PTY
+                                        if !ctrl_chars_sent.contains(&0x03) {
+                                            let _ = tab.terminal.write_to_pty(b"\x03");
+                                            ctrl_chars_sent.push(0x03);
+                                        }
+                                        tab.terminal_selection = None;
                                     }
-                                    tab.terminal_selection = None;
                                 }
                                 egui::Event::Cut => {
                                     // Ctrl+X → send \x18 to PTY
