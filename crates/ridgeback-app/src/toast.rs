@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// Toast notification system for transient, non-blocking messages.
 ///
 /// Supports Info, Warning, and Error severity levels with auto-dismiss.

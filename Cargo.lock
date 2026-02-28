@@ -3621,6 +3621,7 @@ dependencies = [
  "ridgeback-gpu",
  "ridgeback-plugin",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

@@ -24,3 +24,4 @@ rfd = "0.15"
 arboard = "3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 egui-phosphor = "0.7"
+serde_json = { workspace = true }

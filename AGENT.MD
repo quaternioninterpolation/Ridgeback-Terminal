@@ -60,7 +60,7 @@ d:\Dev\RustTerm\
 |---|---|
 | `lib.rs` | Top-level `Config` struct, `GeneralConfig`, `FontConfig`, load/save logic. Platform-conditional default profiles (including WSL on Windows) and default profile names via `#[cfg]`. Exports WSL utilities. |
 | `profile.rs` | `Profile` struct (shell path, appearance, shader settings). `ShellType` enum: `Powershell`, `Cmd`, `Wsl`, `Bash`, `Zsh`, `Fish`, `Custom`. Platform-aware constructors: `default_powershell()`, `default_cmd()`, `default_wsl()`, `wsl_distro(name)`, `default_bash()`, `default_zsh()`, `default_fish()`. |
-| `keybindings.rs` | `KeyBindings` (string-based combos like `"Ctrl+T"`), `ShortcutAction` enum (8 actions). |
+| `keybindings.rs` | `KeyBindings` (string-based combos like `"Ctrl+T"`), `ShortcutAction` enum (16 actions including split/group navigation). |
 | `rendering.rs` | `RenderingConfig`: `max_shader_fps`, `battery_aware`, `update_in_background`. |
 | `ai.rs` | `AiConfig` with sub-configs for LM Studio, OpenAI, Claude, and local models. Autocomplete and command query feature toggles. |
 | `theme.rs` | `TabBarPosition` enum. |
@@ -161,15 +161,19 @@ d:\Dev\RustTerm\
 | File | Purpose |
 |---|---|
 | `main.rs` | Entry point. Loads config, sets up eframe `NativeOptions`, installs CascadiaMono font, creates `RidgebackApp`. Module declarations for all app modules. |
-| `app.rs` | `RidgebackApp` — main state struct (config, tabs, shortcuts, settings, AI, clipboard, cast manager). Implements `eframe::App::update()` — processes PTY output, checks shortcuts, renders tab bar with profile picker popup, settings window, and central terminal panel. |
-| `tabs.rs` | `TabManager` and `TabState`. Each tab holds a `Terminal`, `FindOverlay`, `CommandQueryOverlay`, and scroll offset. Tab lifecycle: open, close, switch, iterate. |
+| `app.rs` | `RidgebackApp` — main state struct (config, tabs, shortcuts, settings, AI, clipboard, cast manager, split panes, tab drag). Implements `eframe::App::update()` — processes PTY output across all groups, checks shortcuts, renders a compact toolbar at top, and split-pane central panel where each leaf renders its own tab group header + terminal. Handles deferred `TabBarAction` processing and drag-to-split drop zones. |
+| `tabs.rs` | `TabGroup` and `TabManager`. `TabGroup` holds a `Vec<TabState>`, `active` index, and unique stable `id`. Each group is an independent tab container with its own tab bar (like IDE editor groups). `TabManager` manages a `Vec<TabGroup>` with `focused_group_id`, provides flat iterators across all tabs (`all_tabs_mut()`), group navigation, and tab movement between groups. |
+| `group_tab_bar.rs` | Per-group tab bar rendering. `draw_group_tab_bar()` renders the tab strip with active highlight, close buttons, animations, overflow "⋯" menu for hidden tabs, right-click context menu (Close, Close Others, Close to Right, Split Right, Split Down, Tear Off, Close Group), and a `+` new tab button. Returns `Vec<TabBarAction>` for deferred processing. `draw_drop_zone_preview()` renders animated blue highlight zones during tab drag. |
+| `split_pane.rs` | `SplitPane` recursive tree with `Single(group_id)` leaves (stable IDs, never renumbered). `SplitPaneManager` manages the tree, tracks `focused_group_id`. Supports horizontal/vertical splitting, group removal with auto-collapse, and drop zone computation for drag-to-split. Each leaf is rendered as a 28px tab bar header + terminal body. |
+| `tab_drag.rs` | `TabDragState` with `DragSource { group_id, tab_idx }` for cross-group drag. Supports within-group reorder, cross-group movement via drop zones, and floating ghost tab rendering during drag. No multi-window tear-off (removed). |
 | `terminal_view.rs` | `show_terminal()` — renders the VT grid with color support (ANSI 256-color palette), cursor highlighting, scrollback, input line with selection/ghost text, keyboard event handling. `handle_key()` dispatches to `InputBuffer` methods and routes `InputAction` results to PTY/clipboard. |
-| `shortcuts.rs` | `ShortcutManager` — parses string keybindings into `KeyCombo` structs, checks egui input each frame. Supports Ctrl/Shift/Alt + any key. |
-| `settings.rs` | `SettingsWindow` — tabbed settings UI (Profiles, Shortcuts, Rendering, AI, Cast/Share). Passes `&mut CastManager` through to the Cast tab. |
+| `shortcuts.rs` | `ShortcutManager` — parses string keybindings into `KeyCombo` structs, checks egui input each frame. 16 actions including split/group navigation. |
+| `settings.rs` | `SettingsWindow` — tabbed settings UI (Profiles, Shortcuts, Rendering, AI, Plugins, Cast/Share). Shortcuts tab shows all 16 keybindings. |
 | `find_overlay.rs` | `FindOverlay` — Ctrl+F search panel over the terminal. |
 | `command_query.rs` | `CommandQueryOverlay` — Ctrl+/ AI command query panel. |
-| `casting.rs` | `CastManager` + SSDP/DIAL discovery. `CastState` (Idle/Discovering/Casting/Error), `CastDevice`, `CastDeviceType`. Background thread UDP multicast to `239.255.255.250:1900` for device discovery. `show_cast_panel()` renders device list with native sharing hints per platform. |
-| `toast.rs` | `ToastManager` + `Toast` — transient notification system. Three levels: Info (3s), Warning (5s), Error (6s). Renders in bottom-right with fade-out. Max 5 concurrent toasts. Used for drag/drop truncation warnings and general status messages. |
+| `casting.rs` | `CastManager` + SSDP/DIAL discovery. Background thread for device scanning. |
+| `toast.rs` | `ToastManager` + `Toast` — transient notification system. |
+| `particle_emit.rs` | Bridge between `TabState` and the active `ParticlePlugin`. |
 
 ---
 
@@ -177,14 +181,22 @@ d:\Dev\RustTerm\
 
 | Shortcut | Action |
 |---|---|
-| Ctrl+T | New tab (opens default profile) |
+| Ctrl+T | New tab in focused group |
 | Ctrl+W | Close active tab |
-| Ctrl+Tab | Next tab |
-| Ctrl+Shift+Tab | Previous tab |
+| Ctrl+Tab | Next tab (within group) |
+| Ctrl+Shift+Tab | Previous tab (within group) |
+| Ctrl+Shift+D | Split right (new group) |
+| Ctrl+Shift+E | Split down (new group) |
+| Ctrl+Shift+W | Close group (all tabs) |
+| Ctrl+Alt+Right | Focus next group |
+| Ctrl+Alt+Left | Focus previous group |
+| Ctrl+Alt+Shift+Right | Move tab to next group |
+| Ctrl+Alt+Shift+Left | Move tab to previous group |
 | Ctrl+, | Open settings |
 | Ctrl+S | Save session to file |
 | Ctrl+F | Find in session |
 | Ctrl+/ | AI command query |
+| Ctrl+Shift+P | Reload plugins |
 | Ctrl+C | Copy selection / interrupt (if no selection & empty input) |
 | Ctrl+V | Paste from clipboard |
 | Ctrl+Z | Undo |
@@ -257,6 +269,66 @@ All 6 previously-unchecked roadmap items have been fully implemented:
    - iTerm2 inline images via OSC 1337 (`decode_iterm2_image()`)
    - Integrated into `VtHandler`: DCS `hook`/`put`/`unhook` + OSC dispatch
    - Unit tests for decoding, repeats, newlines, color definitions, HLS conversion, image layer ops
+
+### Session: IDE-Style Tab Groups, Drag-to-Split, Docs Overhaul
+
+Complete redesign of the split-pane/tab system and documentation:
+
+1. **Tab Groups** ✅
+   - `TabGroup` struct with own `Vec<TabState>`, `active` index, stable `id`
+   - `TabManager` refactored to hold `Vec<TabGroup>`, `focused_group_id`, group lifecycle methods
+   - Flat iterators (`all_tabs_mut()`) for cross-group PTY/settings processing
+
+2. **Split Pane Redesign** ✅
+   - `SplitPane::Single(group_id)` — leaves reference groups by stable ID (never renumbered)
+   - Removed `remap_after_remove` — group IDs are stable
+   - Drop zone computation for drag-to-split (left/right/top/bottom/center zones per leaf)
+   - Auto-collapse when a group becomes empty
+
+3. **Per-Group Tab Bar (`group_tab_bar.rs`)** ✅
+   - Tab strip rendering with animations, close buttons, active highlight
+   - Right-click context menu: Close, Close Others, Close to Right, Split Right, Split Down, Tear Off, Close Group
+   - Overflow "⋯" menu for hidden tabs (scrollable list)
+   - `+` button for new tab in the group
+   - `TabBarAction` enum for deferred processing
+
+4. **Cross-Group Tab Drag** ✅
+   - `DragSource { group_id, tab_idx }` replaces old `Option<usize>`
+   - Edge drop zones create new groups via split; center zone moves tab into existing group
+   - Animated blue highlight preview during drag
+   - Ghost tab rendering under cursor
+   - Removed multi-window tear-off infrastructure (`lazy_static`, `DetachedTabInfo`, `IN_FLIGHT_TAB`)
+
+5. **New Keybindings** ✅
+   - `FocusNextGroup` (Ctrl+Alt+Right), `FocusPrevGroup` (Ctrl+Alt+Left)
+   - `MoveTabNextGroup` (Ctrl+Alt+Shift+Right), `MoveTabPrevGroup` (Ctrl+Alt+Shift+Left)
+   - 16 total `ShortcutAction` variants (was 12)
+
+6. **Toolbar Redesign** ✅
+   - Global top tab bar replaced with compact toolbar: + (profile picker), split buttons, settings gear
+   - Per-group tab bars live inside each split pane leaf (28px header)
+
+7. **Documentation Overhaul** ✅
+   - `README.md` simplified — humble tone, removed architecture/tech stack/roadmap
+   - `docs/architecture.md` created — tech stack, crate structure, tab group model, shader pipeline
+   - `docs/shaders.md` — added per-tab note, Lua plugin registration path
+   - `docs/plugins.md` — added Shader Plugins and Particle Plugins sections
+   - `docs/profile-settings.md` — all 16 keybindings documented
+   - `AGENT.MD` — updated module tables, shortcuts, completed work
+
+8. **Focus Bug Fix** ✅
+   - Old bug: clicking a tab in the global bar set `tabs.active` but the split tree leaf still held `Single(0)`, so new tabs never rendered and switching tabs broke
+   - Fixed by design: each leaf is now a group with its own `active` index; tab bar clicks call `group.set_active(idx)` directly
+
+9. **Widget ID Collision Fix** ✅
+   - Bug: all terminals shared `id_salt("terminal_output")` for ScrollArea and `ui.id().with("inline_input")` for keyboard focus — egui reported "Second use of ScrollArea ID" and "Second use of widget ID" when split
+   - Bug: every terminal called `m.request_focus(input_id)` every frame when nothing was focused, so all terminals received keyboard input simultaneously
+   - Fix: added `terminal_id: u64` to `TabState` (auto-incrementing `AtomicU64` counter, never reused)
+   - ScrollArea: `id_salt(("terminal_output", terminal_id))` — unique per terminal
+   - Input focus: `egui::Id::new(("inline_input", terminal_id))` — unique per terminal
+   - Auto-focus: only the focused group's active tab calls `request_focus` when nothing is focused
+   - `show_terminal()` now takes `terminal_id: u64` and `is_focused_terminal: bool` parameters
+   - `handle_keyboard_input()` early-returns if `!is_focused_terminal`
 
 ---
 

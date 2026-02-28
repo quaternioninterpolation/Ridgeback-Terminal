@@ -12,6 +12,22 @@ pub struct KeyBindings {
     pub save_session: String,
     pub find_in_session: String,
     pub ai_command_query: String,
+    /// Split active pane horizontally (side by side).
+    pub split_horizontal: String,
+    /// Split active pane vertically (top/bottom).
+    pub split_vertical: String,
+    /// Close / unsplit active pane (keep the other side).
+    pub close_pane: String,
+    /// Reload all Lua plugins without restarting.
+    pub reload_plugins: String,
+    /// Focus the next tab group.
+    pub focus_next_group: String,
+    /// Focus the previous tab group.
+    pub focus_prev_group: String,
+    /// Move the active tab to the next group.
+    pub move_tab_to_next_group: String,
+    /// Move the active tab to the previous group.
+    pub move_tab_to_prev_group: String,
 }
 
 impl Default for KeyBindings {
@@ -25,6 +41,14 @@ impl Default for KeyBindings {
             save_session: "Ctrl+S".to_string(),
             find_in_session: "Ctrl+F".to_string(),
             ai_command_query: "Ctrl+/".to_string(),
+            split_horizontal: "Ctrl+Shift+D".to_string(),
+            split_vertical: "Ctrl+Shift+E".to_string(),
+            close_pane: "Ctrl+Shift+W".to_string(),
+            reload_plugins: "Ctrl+Shift+P".to_string(),
+            focus_next_group: "Ctrl+Alt+Right".to_string(),
+            focus_prev_group: "Ctrl+Alt+Left".to_string(),
+            move_tab_to_next_group: "Ctrl+Alt+Shift+Right".to_string(),
+            move_tab_to_prev_group: "Ctrl+Alt+Shift+Left".to_string(),
         }
     }
 }
@@ -40,6 +64,14 @@ pub enum ShortcutAction {
     SaveSession,
     FindInSession,
     AiCommandQuery,
+    SplitHorizontal,
+    SplitVertical,
+    ClosePane,
+    ReloadPlugins,
+    FocusNextGroup,
+    FocusPrevGroup,
+    MoveTabNextGroup,
+    MoveTabPrevGroup,
 }
 
 impl ShortcutAction {
@@ -53,6 +85,14 @@ impl ShortcutAction {
             ShortcutAction::SaveSession,
             ShortcutAction::FindInSession,
             ShortcutAction::AiCommandQuery,
+            ShortcutAction::SplitHorizontal,
+            ShortcutAction::SplitVertical,
+            ShortcutAction::ClosePane,
+            ShortcutAction::ReloadPlugins,
+            ShortcutAction::FocusNextGroup,
+            ShortcutAction::FocusPrevGroup,
+            ShortcutAction::MoveTabNextGroup,
+            ShortcutAction::MoveTabPrevGroup,
         ]
     }
 
@@ -66,6 +106,16 @@ impl ShortcutAction {
             ShortcutAction::SaveSession => "Save Session",
             ShortcutAction::FindInSession => "Find in Session",
             ShortcutAction::AiCommandQuery => "AI Command Query",
+            ShortcutAction::SplitHorizontal => "Split Horizontal",
+            ShortcutAction::SplitVertical => "Split Vertical",
+            ShortcutAction::ClosePane => "Close Pane",
+            ShortcutAction::ReloadPlugins => "Reload Plugins",
+            ShortcutAction::FocusNextGroup => "Focus Next Group",
+            ShortcutAction::FocusPrevGroup => "Focus Previous Group",
+            ShortcutAction::MoveTabNextGroup => "Move Tab to Next Group",
+            ShortcutAction::MoveTabPrevGroup => "Move Tab to Previous Group",
         }
     }
 }
+
+

@@ -1,188 +1,95 @@
-use anyhow::Result;
-use ridgeback_config::{Profile, ShaderEffect, ShaderParams};
+﻿use anyhow::Result;
+use ridgeback_config::{Profile, ShaderEffectConfig, TypingParticlesConfig};
 use ridgeback_core::Terminal;
+use ridgeback_plugin::ParticleEvent;
 use crate::find_overlay::FindOverlay;
 use crate::command_query::CommandQueryOverlay;
 
-// ── Fire / smoke particle system ─────────────────────────────────────────────
+// ── Live particle state (plugin-driven) ───────────────────────────────────────
 
-/// A single fire or smoke particle spawned from the cursor on keypress.
+/// Runtime state for a single live particle.
 #[derive(Clone)]
-pub struct FireParticle {
-    /// World position (pixels relative to terminal rect origin).
-    pub x: f32,
-    pub y: f32,
-    /// Velocity.
-    pub vx: f32,
-    pub vy: f32,
-    /// Remaining lifetime in seconds (0 = dead).
-    pub life: f32,
-    /// Initial lifetime, used to compute alpha fade.
-    pub max_life: f32,
-    /// Radius of the particle.
-    pub radius: f32,
-    /// True = smoke, false = fire ember.
-    pub is_smoke: bool,
-    /// Heat value 0..1 – drives colour for fire, opacity for smoke.
-    pub heat: f32,
+pub struct LiveParticle {
+    pub event: ParticleEvent,
+    /// Seconds elapsed since this particle was spawned.
+    pub age: f32,
 }
 
-/// Doom-style 1-D fire simulation row used for the bottom-edge base flame.
-/// One cell per pixel column (downsampled to every 4 px).
-pub struct FireSim {
-    /// Width in cells.
-    pub w: usize,
-    /// Heat buffer: `buf[row * w + col]`, row 0 = top, row H-1 = bottom (source).
-    pub buf: Vec<f32>,
-    /// Height in cells.
-    pub h: usize,
-}
-
-impl FireSim {
-    pub fn new(w: usize, h: usize) -> Self {
-        let mut buf = vec![0.0f32; w * h];
-        // Seed the bottom row with full heat.
-        for x in 0..w {
-            buf[(h - 1) * w + x] = 1.0;
-        }
-        Self { w, h, buf }
-    }
-
-    /// Step the simulation one tick.
-    pub fn step(&mut self, decay: f32, spread: f32, rng_seed: f32) {
-        let w = self.w;
-        let h = self.h;
-        // Re-seed the bottom row with some flicker.
-        for x in 0..w {
-            let flicker = ((rng_seed * 17.3 + x as f32 * 0.7).sin() * 0.5 + 0.5) * 0.2;
-            self.buf[(h - 1) * w + x] = (0.85 + flicker).min(1.0);
-        }
-        // Propagate upward.
-        for row in 1..h {
-            for col in 0..w {
-                let left  = if col > 0 { self.buf[row * w + col - 1] } else { self.buf[row * w + col] };
-                let right = if col < w - 1 { self.buf[row * w + col + 1] } else { self.buf[row * w + col] };
-                let below = self.buf[row * w + col];
-                // Spread sideways and decay upward
-                let spread_noise = ((rng_seed * 31.1 + col as f32 * 1.3 + row as f32 * 0.9).sin() * 0.5 + 0.5) * spread;
-                let avg = (left * 0.2 + right * 0.2 + below * 0.6) + spread_noise * 0.05;
-                self.buf[(row - 1) * w + col] = (avg - decay * 0.03).max(0.0);
-            }
-        }
-    }
-}
-
-/// All particle + simulation state for the fire shader on one tab.
-pub struct FireState {
-    pub sim: FireSim,
-    pub particles: Vec<FireParticle>,
-    /// Pixel position of the last keypress emission (relative to term rect).
-    pub last_emit_x: f32,
-    pub last_emit_y: f32,
-    /// Accumulated time delta for simulation stepping.
+/// Per-tab particle simulation state. Fed by `ParticlePlugin::emit()`.
+#[allow(dead_code)]
+pub struct ParticleState {
+    pub particles: Vec<LiveParticle>,
     pub accum: f32,
-    /// Pseudo-random seed that advances each frame.
     pub rng: f32,
 }
 
-impl FireState {
+impl ParticleState {
     pub fn new() -> Self {
-        Self {
-            sim: FireSim::new(80, 20),
-            particles: Vec::with_capacity(512),
-            last_emit_x: 0.0,
-            last_emit_y: 0.0,
-            accum: 0.0,
-            rng: 0.0,
-        }
+        Self { particles: Vec::with_capacity(256), accum: 0.0, rng: 0.0 }
     }
 
-    /// Spawn fire + smoke burst from (x, y) in terminal-rect-local pixels.
-    pub fn emit_keypress(&mut self, x: f32, y: f32) {
-        self.last_emit_x = x;
-        self.last_emit_y = y;
-
-        let rng = &mut self.rng;
-        let mut next = || { *rng = (*rng * 1664525.0 + 1013904223.0) % 1_000_000.0; *rng / 1_000_000.0 };
-
-        // Fire embers – 8 particles
-        for _ in 0..8 {
-            let angle = next() * std::f32::consts::TAU;
-            let speed = 20.0 + next() * 60.0;
-            self.particles.push(FireParticle {
-                x, y,
-                vx: angle.cos() * speed * 0.4,
-                vy: -(30.0 + next() * 80.0),   // upward
-                life: 0.4 + next() * 0.5,
-                max_life: 0.9,
-                radius: 2.0 + next() * 3.0,
-                is_smoke: false,
-                heat: 0.7 + next() * 0.3,
-            });
-        }
-        // Smoke puffs – 5 particles
-        for _ in 0..5 {
-            self.particles.push(FireParticle {
-                x: x + (next() - 0.5) * 10.0,
-                y,
-                vx: (next() - 0.5) * 15.0,
-                vy: -(10.0 + next() * 25.0),
-                life: 0.8 + next() * 0.8,
-                max_life: 1.6,
-                radius: 4.0 + next() * 6.0,
-                is_smoke: true,
-                heat: 0.0,
-            });
-        }
-    }
-
-    /// Advance the particle simulation by `dt` seconds.
-    pub fn update(&mut self, dt: f32, params: &ShaderParams) {
+    /// Advance particle physics by `dt` seconds.
+    pub fn update(&mut self, dt: f32) {
         self.rng = (self.rng * 1664525.0 + 1013904223.0) % 1_000_000.0;
-        let rng_seed = self.rng / 1_000_000.0;
-
-        self.accum += dt;
-        let step_dt = 1.0 / 30.0;
-        while self.accum >= step_dt {
-            self.sim.step(params.fire_decay_rate, params.fire_spread, rng_seed + self.accum);
-            self.accum -= step_dt;
-        }
-
-        // Update particles
-        for p in &mut self.particles {
-            p.x  += p.vx * dt;
-            p.y  += p.vy * dt;
-            // Gravity: fire rises, smoke drifts
+        for lp in &mut self.particles {
+            let p = &mut lp.event;
+            lp.age += dt;
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
             if p.is_smoke {
-                p.vy -= 5.0 * dt;   // gentle upward drift
+                p.vy += -40.0 * dt;
                 p.vx *= 1.0 - dt * 0.8;
-                p.radius += dt * 8.0; // smoke expands
+                p.radius += dt * 8.0;
             } else {
-                p.vy += 20.0 * dt;  // embers arc then fall
-                p.heat -= dt * 0.8;
+                p.vy += 120.0 * dt; // embers fall
+                p.heat = (p.heat - dt * 0.8).max(0.0);
             }
             p.life -= dt;
         }
-        self.particles.retain(|p| p.life > 0.0 && (!p.is_smoke || p.radius < 40.0));
+        self.particles.retain(|lp| {
+            lp.event.life > 0.0 && (!lp.event.is_smoke || lp.event.radius < 40.0)
+        });
     }
+
+    /// Spawn particles from a plugin emit result.
+    pub fn spawn(&mut self, events: Vec<ParticleEvent>) {
+        for e in events {
+            self.particles.push(LiveParticle { event: e, age: 0.0 });
+        }
+    }
+}
+
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Global counter for unique terminal instance IDs.
+static NEXT_TERMINAL_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Allocate a unique terminal ID (never reused).
+fn next_terminal_id() -> u64 {
+    NEXT_TERMINAL_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 // ── Tab state ─────────────────────────────────────────────────────────────────
 
 /// State for a single terminal tab.
+#[allow(dead_code)]
 pub struct TabState {
+    /// Unique ID for this terminal instance (used for egui widget ID scoping).
+    pub terminal_id: u64,
     pub terminal: Terminal,
     pub find_overlay: FindOverlay,
     pub command_query: CommandQueryOverlay,
     pub scroll_offset: usize,
-    pub shader_effect: ShaderEffect,
-    pub shader_params: ShaderParams,
+    /// Plugin-driven shader effect for this tab.
+    pub shader_effect: ShaderEffectConfig,
+    /// Plugin-driven typing particles for this tab.
+    pub typing_particles: TypingParticlesConfig,
     /// Display title shown in the tab bar.
     pub tab_title: String,
-    /// Fire particle + simulation state (only used when shader_effect == Fire).
-    pub fire: FireState,
-    /// The current inline input line buffer (mirrors what the user is typing).
+    /// The current inline input line buffer.
     pub inline_input: String,
+    /// Live particle simulation state (fed by particle plugins).
+    pub particles: ParticleState,
     /// Open animation progress 0.0 → 1.0.
     pub open_anim: f32,
     /// Close animation progress 0.0 → 1.0.
@@ -197,24 +104,28 @@ pub struct TabState {
     pub text_foreground: String,
 }
 
-/// Manages all open tabs.
-pub struct TabManager {
+// ── Tab Group ─────────────────────────────────────────────────────────────────
+
+/// A group of tabs sharing a single pane in the split layout.
+/// Each group has its own tab bar header and active tab selection —
+/// like an editor group in VS Code.
+#[allow(dead_code)]
+pub struct TabGroup {
+    /// Unique stable identifier (never renumbered).
+    pub id: usize,
     tabs: Vec<TabState>,
     active: usize,
 }
 
-impl TabManager {
-    pub fn new() -> Self {
-        Self {
-            tabs: Vec::new(),
-            active: 0,
-        }
+#[allow(dead_code)]
+impl TabGroup {
+    pub fn new(id: usize) -> Self {
+        Self { id, tabs: Vec::new(), active: 0 }
     }
 
     pub fn open_tab(&mut self, profile_name: &str, profile: &Profile) -> Result<()> {
         let terminal = Terminal::spawn(profile_name, profile, 24, 80)?;
 
-        // Count how many tabs with this same display name are already open.
         let base_name = &profile.name;
         let existing = self.tabs.iter()
             .filter(|t| t.terminal.profile_name == profile_name)
@@ -226,15 +137,16 @@ impl TabManager {
         };
 
         let tab = TabState {
+            terminal_id: next_terminal_id(),
             terminal,
             find_overlay: FindOverlay::new(),
             command_query: CommandQueryOverlay::new(),
             scroll_offset: 0,
-            shader_effect: profile.shader_effect,
-            shader_params: profile.shader_params.clone(),
+            shader_effect: profile.shader_effect.clone(),
+            typing_particles: profile.typing_particles.clone(),
             tab_title,
-            fire: FireState::new(),
             inline_input: String::new(),
+            particles: ParticleState::new(),
             open_anim: 0.0,
             close_anim: 0.0,
             closing: false,
@@ -247,10 +159,7 @@ impl TabManager {
         Ok(())
     }
 
-    // ...existing code...
-
-
-    /// Immediately remove a tab (used after close animation finishes).
+    /// Remove a tab immediately (used after close animation finishes).
     pub fn remove_tab(&mut self, index: usize) {
         if index < self.tabs.len() {
             self.tabs.remove(index);
@@ -273,10 +182,37 @@ impl TabManager {
         }
     }
 
+    /// Swap two tabs by index (drag-to-reorder).
+    pub fn swap_tabs(&mut self, a: usize, b: usize) {
+        let len = self.tabs.len();
+        if a < len && b < len && a != b {
+            self.tabs.swap(a, b);
+            if self.active == a { self.active = b; }
+            else if self.active == b { self.active = a; }
+        }
+    }
+
+    /// Remove and return a tab by index (for moving between groups).
+    pub fn take_tab(&mut self, index: usize) -> Option<TabState> {
+        if index >= self.tabs.len() { return None; }
+        let tab = self.tabs.remove(index);
+        if self.active >= self.tabs.len() && !self.tabs.is_empty() {
+            self.active = self.tabs.len() - 1;
+        }
+        Some(tab)
+    }
+
+    /// Insert a tab at a specific index.
+    pub fn insert_tab(&mut self, index: usize, tab: TabState) {
+        let idx = index.min(self.tabs.len());
+        self.tabs.insert(idx, tab);
+        self.active = idx;
+    }
+
     /// Advance open/close animations by `dt` seconds.
-    /// Returns true if any animation is still running (caller should request repaint).
+    /// Returns true if any animation is still running.
     pub fn tick_animations(&mut self, dt: f32) -> bool {
-        let speed = 8.0_f32; // complete in ~0.125 s
+        let speed = 8.0_f32;
         let mut animating = false;
         let mut to_remove: Vec<usize> = Vec::new();
 
@@ -293,7 +229,6 @@ impl TabManager {
                 }
             }
         }
-        // Remove finished-closing tabs in reverse order so indices stay valid
         for i in to_remove.into_iter().rev() {
             self.tabs.remove(i);
             if self.active >= self.tabs.len() && !self.tabs.is_empty() {
@@ -333,11 +268,14 @@ impl TabManager {
         self.tabs.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.tabs.is_empty()
+    }
+
     pub fn any_active(&self) -> bool {
         !self.tabs.is_empty()
     }
 
-    /// Immutable iterator over all tabs.
     pub fn tabs_ref(&self) -> impl Iterator<Item = &TabState> {
         self.tabs.iter()
     }
@@ -354,7 +292,219 @@ impl TabManager {
         self.tabs.get(index)
     }
 
+    pub fn tab_mut(&mut self, index: usize) -> Option<&mut TabState> {
+        self.tabs.get_mut(index)
+    }
+
     pub fn tabs_mut(&mut self) -> &mut [TabState] {
         &mut self.tabs
+    }
+
+    /// Close all tabs except the one at `keep_index`.
+    pub fn close_other_tabs(&mut self, keep_index: usize) {
+        for (i, tab) in self.tabs.iter_mut().enumerate() {
+            if i != keep_index && !tab.closing {
+                tab.closing = true;
+            }
+        }
+    }
+
+    /// Close all tabs to the right of `index`.
+    pub fn close_tabs_to_right(&mut self, index: usize) {
+        for (i, tab) in self.tabs.iter_mut().enumerate() {
+            if i > index && !tab.closing {
+                tab.closing = true;
+            }
+        }
+    }
+
+    /// Close all tabs in this group (start close animation).
+    pub fn close_all_tabs(&mut self) {
+        for tab in &mut self.tabs {
+            if !tab.closing {
+                tab.closing = true;
+            }
+        }
+    }
+}
+
+// ── Tab Manager ───────────────────────────────────────────────────────────────
+
+/// Manages all tab groups. Each group is a pane in the split layout.
+#[allow(dead_code)]
+pub struct TabManager {
+    groups: Vec<TabGroup>,
+    focused_group_id: usize,
+    next_group_id: usize,
+}
+
+#[allow(dead_code)]
+impl TabManager {
+    pub fn new() -> Self {
+        Self {
+            groups: Vec::new(),
+            focused_group_id: 0,
+            next_group_id: 0,
+        }
+    }
+
+    /// Create a new empty group and return its ID.
+    pub fn new_group(&mut self) -> usize {
+        let id = self.next_group_id;
+        self.next_group_id += 1;
+        self.groups.push(TabGroup::new(id));
+        id
+    }
+
+    /// Create a new group with a tab already opened and return the group ID.
+    pub fn new_group_with_tab(&mut self, profile_name: &str, profile: &Profile) -> Result<usize> {
+        let id = self.new_group();
+        self.group_by_id_mut(id).unwrap().open_tab(profile_name, profile)?;
+        Ok(id)
+    }
+
+    pub fn focused_group_id(&self) -> usize {
+        self.focused_group_id
+    }
+
+    pub fn set_focused_group(&mut self, id: usize) {
+        if self.groups.iter().any(|g| g.id == id) {
+            self.focused_group_id = id;
+        }
+    }
+
+    pub fn focused_group(&self) -> Option<&TabGroup> {
+        self.groups.iter().find(|g| g.id == self.focused_group_id)
+    }
+
+    pub fn focused_group_mut(&mut self) -> Option<&mut TabGroup> {
+        let id = self.focused_group_id;
+        self.groups.iter_mut().find(|g| g.id == id)
+    }
+
+    pub fn group_by_id(&self, id: usize) -> Option<&TabGroup> {
+        self.groups.iter().find(|g| g.id == id)
+    }
+
+    pub fn group_by_id_mut(&mut self, id: usize) -> Option<&mut TabGroup> {
+        self.groups.iter_mut().find(|g| g.id == id)
+    }
+
+    /// Remove a group by ID. Returns true if removed.
+    pub fn remove_group(&mut self, id: usize) -> bool {
+        let pos = self.groups.iter().position(|g| g.id == id);
+        if let Some(idx) = pos {
+            self.groups.remove(idx);
+            if self.focused_group_id == id {
+                self.focused_group_id = self.groups.first().map(|g| g.id).unwrap_or(0);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Ordered list of group IDs.
+    pub fn group_ids_ordered(&self) -> Vec<usize> {
+        self.groups.iter().map(|g| g.id).collect()
+    }
+
+    /// Number of groups.
+    pub fn group_count(&self) -> usize {
+        self.groups.len()
+    }
+
+    /// True if any group has any tab.
+    pub fn any_active(&self) -> bool {
+        self.groups.iter().any(|g| !g.is_empty())
+    }
+
+    /// Flat mutable iterator over ALL tabs in ALL groups.
+    pub fn all_tabs_mut(&mut self) -> impl Iterator<Item = &mut TabState> {
+        self.groups.iter_mut().flat_map(|g| g.tabs.iter_mut())
+    }
+
+    /// Flat immutable iterator over all tabs.
+    pub fn all_tabs_ref(&self) -> impl Iterator<Item = &TabState> {
+        self.groups.iter().flat_map(|g| g.tabs.iter())
+    }
+
+    /// Tick animations in all groups.
+    pub fn tick_animations(&mut self, dt: f32) -> bool {
+        let mut any = false;
+        for g in &mut self.groups {
+            if g.tick_animations(dt) { any = true; }
+        }
+        any
+    }
+
+    /// Open a tab in the focused group.
+    pub fn open_tab_in_focused(&mut self, profile_name: &str, profile: &Profile) -> Result<()> {
+        if let Some(g) = self.focused_group_mut() {
+            g.open_tab(profile_name, profile)?;
+        }
+        Ok(())
+    }
+
+    /// Active tab of the focused group.
+    pub fn active_tab(&self) -> Option<&TabState> {
+        self.focused_group().and_then(|g| g.active_tab())
+    }
+
+    /// Active tab of the focused group (mutable).
+    pub fn active_tab_mut(&mut self) -> Option<&mut TabState> {
+        self.focused_group_mut().and_then(|g| g.active_tab_mut())
+    }
+
+    /// Move a tab from one group to another.
+    /// Returns `true` if the source group is now empty.
+    pub fn move_tab(&mut self, from_group_id: usize, tab_idx: usize, to_group_id: usize) -> bool {
+        if from_group_id == to_group_id { return false; }
+        let tab = {
+            let src = self.groups.iter_mut().find(|g| g.id == from_group_id);
+            match src {
+                Some(g) => g.take_tab(tab_idx),
+                None => None,
+            }
+        };
+        if let Some(tab) = tab {
+            let dst = self.groups.iter_mut().find(|g| g.id == to_group_id);
+            if let Some(g) = dst {
+                let idx = g.count();
+                g.insert_tab(idx, tab);
+            }
+        }
+        self.groups.iter().find(|g| g.id == from_group_id).map_or(true, |g| g.is_empty())
+    }
+
+    /// Get the next group ID relative to the current focused group.
+    pub fn next_group_id_from_focused(&self) -> Option<usize> {
+        let ids = self.group_ids_ordered();
+        if ids.len() <= 1 { return None; }
+        let pos = ids.iter().position(|&id| id == self.focused_group_id)?;
+        Some(ids[(pos + 1) % ids.len()])
+    }
+
+    /// Get the previous group ID relative to the current focused group.
+    pub fn prev_group_id_from_focused(&self) -> Option<usize> {
+        let ids = self.group_ids_ordered();
+        if ids.len() <= 1 { return None; }
+        let pos = ids.iter().position(|&id| id == self.focused_group_id)?;
+        Some(ids[if pos == 0 { ids.len() - 1 } else { pos - 1 }])
+    }
+
+    /// Check if a group with the given ID exists and is empty.
+    pub fn is_group_empty(&self, id: usize) -> bool {
+        self.groups.iter().find(|g| g.id == id).map_or(true, |g| g.is_empty())
+    }
+
+    /// Iterate groups immutably.
+    pub fn groups_ref(&self) -> impl Iterator<Item = &TabGroup> {
+        self.groups.iter()
+    }
+
+    /// Iterate groups mutably.
+    pub fn groups_mut(&mut self) -> impl Iterator<Item = &mut TabGroup> {
+        self.groups.iter_mut()
     }
 }

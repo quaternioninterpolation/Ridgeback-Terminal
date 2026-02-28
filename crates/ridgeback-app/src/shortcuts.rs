@@ -29,6 +29,14 @@ impl ShortcutManager {
             (ShortcutAction::SaveSession, &keybindings.save_session),
             (ShortcutAction::FindInSession, &keybindings.find_in_session),
             (ShortcutAction::AiCommandQuery, &keybindings.ai_command_query),
+            (ShortcutAction::SplitHorizontal, &keybindings.split_horizontal),
+            (ShortcutAction::SplitVertical, &keybindings.split_vertical),
+            (ShortcutAction::ClosePane, &keybindings.close_pane),
+            (ShortcutAction::ReloadPlugins, &keybindings.reload_plugins),
+            (ShortcutAction::FocusNextGroup, &keybindings.focus_next_group),
+            (ShortcutAction::FocusPrevGroup, &keybindings.focus_prev_group),
+            (ShortcutAction::MoveTabNextGroup, &keybindings.move_tab_to_next_group),
+            (ShortcutAction::MoveTabPrevGroup, &keybindings.move_tab_to_prev_group),
         ];
 
         for (action, combo_str) in pairs {

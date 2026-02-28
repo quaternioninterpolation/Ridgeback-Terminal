@@ -1,6 +1,8 @@
 # Shader Effects
 
-Ridgeback renders the terminal viewport through a custom **wgpu multi-pass shader pipeline**, enabling real-time visual effects without sacrificing text clarity. Shaders are written in **WGSL** (WebGPU Shading Language) and run on the GPU.
+Ridgeback can apply visual effects to the terminal viewport using a wgpu shader pipeline. Shaders are written in WGSL and run on the GPU.
+
+Each tab can have a different shader effect via its profile, so within a single tab group one tab might use CRT scanlines while another uses fire.
 
 ---
 
@@ -172,11 +174,27 @@ Shader source files are located in `crates/ridgeback-gpu/shaders/`:
 
 ## Writing Custom Shaders
 
-To add a new post-process effect:
+### Via Lua Plugin (easiest)
+
+Create a `.lua` file in your plugins directory and call `ridgeback.register_shader()`:
+
+```lua
+local params = {
+    { key = "intensity", label = "Intensity", type = "float", min = 0.0, max = 2.0, default = 1.0 },
+    { key = "color",     label = "Tint",      type = "color", default = "#ff4400" },
+}
+
+-- id, display_name, wgsl_path (nil = use built-in egui rendering), param_schema
+ridgeback.register_shader("my_effect", "My Effect", nil, params)
+```
+
+See `assets/plugins/crt_shader.lua` and `assets/plugins/fire_shader.lua` for working examples.
+
+### Via Rust (compile-time)
 
 1. Create a new `.wgsl` file in `crates/ridgeback-gpu/shaders/`
 2. Add a variant to the `ShaderEffect` enum in `ridgeback-config/src/profile.rs`
 3. Register the shader pass in `ridgeback-gpu/src/shader_pipeline.rs`
 4. Add parameters to `ShaderParams` and wire them into the uniform buffer
 
-The pipeline is designed to be extensible — each pass reads from the previous pass's output texture and writes to its own. You can insert passes at any point in the chain.
+Each pass reads from the previous pass's output texture and writes to its own, so you can insert passes at any point in the chain.

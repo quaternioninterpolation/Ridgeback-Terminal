@@ -1,69 +1,68 @@
+﻿use arboard::Clipboard;
 use egui;
-use crate::tabs::TabState;
-use ridgeback_core::input_buffer::InputAction;
 use ridgeback_core::cell::Color;
-use ridgeback_config::ShaderEffect;
+use ridgeback_core::input_buffer::InputAction;
 
-/// Render the terminal viewport for the active tab.
+use crate::tabs::TabState;
+
+/// Render the terminal viewport for one tab (or one split-pane cell).
+///
+/// `terminal_id` must be unique per terminal instance (used to scope egui widget IDs).
+/// `is_focused_terminal` should be true only for the active tab of the focused group.
+/// Keyboard input is ONLY processed when `is_focused_terminal` is true.
 pub fn show_terminal(
     ui: &mut egui::Ui,
     tab: &mut TabState,
-    clipboard: &mut Option<arboard::Clipboard>,
+    clipboard: &mut Option<Clipboard>,
     bg_texture: Option<&egui::TextureHandle>,
     allow_shader_repaint: bool,
+    terminal_id: u64,
+    is_focused_terminal: bool,
 ) {
     let available = ui.available_size();
     let font_size = 14.0;
     let bg_color = egui::Color32::from_rgb(0x1e, 0x1e, 0x2e);
 
-    // Resolve text foreground from profile hex string
     let default_fg = parse_hex_color(&tab.text_foreground)
         .unwrap_or(egui::Color32::from_gray(205));
 
-    // Shadow: a dark semi-transparent rect drawn under each row of text.
-    // alpha = 0 means no shadow; 1.0 means fully black rect behind text.
     let shadow_enabled = tab.text_shadow_enabled;
     let shadow_alpha   = ((tab.text_shadow_alpha.clamp(0.0, 1.0)) * 200.0) as u8;
 
-    // Measure the real advance width of one monospace character.
     let char_w = ui.ctx().fonts(|f| {
         f.glyph_width(&egui::FontId::monospace(font_size), ' ')
     });
 
     let term_rect = ui.available_rect_before_wrap();
 
-    // ── Layer 1: solid background ─────────────────────────────────────────
+    // Layer 1 — solid background
     ui.painter().rect_filled(term_rect, 0.0, bg_color);
 
-    // ── Layer 2: background image at 50% opacity, uniform scale (cover) ──
+    // Layer 2 — background image at 50% opacity
     if let Some(tex) = bg_texture {
-        let img_w = tex.size()[0] as f32;
-        let img_h = tex.size()[1] as f32;
-        let rect_w = term_rect.width();
-        let rect_h = term_rect.height();
-        let scale = (rect_w / img_w).max(rect_h / img_h);
-        let scaled_w = img_w * scale;
-        let scaled_h = img_h * scale;
-        let u0 = (scaled_w - rect_w) / (2.0 * scaled_w);
-        let v0 = (scaled_h - rect_h) / (2.0 * scaled_h);
+        let (iw, ih) = (tex.size()[0] as f32, tex.size()[1] as f32);
+        let (rw, rh) = (term_rect.width(), term_rect.height());
+        let scale = (rw / iw).max(rh / ih);
+        let (sw, sh) = (iw * scale, ih * scale);
+        let (u0, v0) = ((sw - rw) / (2.0 * sw), (sh - rh) / (2.0 * sh));
         ui.painter().image(
-            tex.id(),
-            term_rect,
+            tex.id(), term_rect,
             egui::Rect::from_min_max(egui::pos2(u0, v0), egui::pos2(1.0 - u0, 1.0 - v0)),
             egui::Color32::from_white_alpha(128),
         );
     }
 
-    // Get terminal content
-    let visible_cells = tab.terminal.vt.visible_cells().to_vec();
+    let visible_cells   = tab.terminal.vt.visible_cells().to_vec();
     let scrollback_lines = tab.terminal.vt.scrollback.all_lines_as_strings();
-    let cursor_row = tab.terminal.vt.cursor_row;
-    let cursor_col = tab.terminal.vt.cursor_col;
-    let _cursor_style = tab.terminal.vt.cursor_style;
-    let _cursor_color = egui::Color32::from_rgb(205, 214, 244);
+    let cursor_row       = tab.terminal.vt.cursor_row;
+    let cursor_col       = tab.terminal.vt.cursor_col;
+
+    // Track cursor screen position for particles
+    let mut cursor_screen_x = 0.0f32;
+    let mut cursor_screen_y = 0.0f32;
 
     egui::ScrollArea::vertical()
-        .id_salt("terminal_output")
+        .id_salt(("terminal_output", terminal_id))
         .auto_shrink([false, false])
         .stick_to_bottom(true)
         .show(ui, |ui| {
@@ -72,7 +71,7 @@ pub fn show_terminal(
             ui.visuals_mut().widgets.noninteractive.bg_fill = egui::Color32::TRANSPARENT;
             ui.visuals_mut().extreme_bg_color = egui::Color32::TRANSPARENT;
 
-            // Render scrollback lines
+            // Scrollback lines
             for line in &scrollback_lines {
                 let text = if line.is_empty() { " " } else { line.as_str() };
                 let mut job = egui::text::LayoutJob::default();
@@ -84,51 +83,40 @@ pub fn show_terminal(
                 });
                 let galley = ui.fonts(|f| f.layout_job(job));
                 let (resp, painter) = ui.allocate_painter(galley.size(), egui::Sense::hover());
-                let origin = resp.rect.min;
-                // Dark underlay rect — darkens whatever is behind, no bloom
                 if shadow_enabled && shadow_alpha > 0 {
                     painter.rect_filled(
-                        resp.rect.expand2(egui::vec2(2.0, 1.0)),
-                        2.0,
+                        resp.rect.expand2(egui::vec2(2.0, 1.0)), 2.0,
                         egui::Color32::from_black_alpha(shadow_alpha),
                     );
                 }
-                painter.galley(origin, galley, default_fg);
+                painter.galley(resp.rect.min, galley, default_fg);
             }
 
-            // Render visible grid rows
+            // Visible grid rows
             for (row_idx, row) in visible_cells.iter().enumerate() {
                 let has_content = row.iter().any(|c| !c.is_empty());
                 let is_cursor_row = row_idx == cursor_row;
-                if !has_content && !is_cursor_row {
-                    continue;
-                }
+                if !has_content && !is_cursor_row { continue; }
 
-                // ── Cursor row ────────────────────────────────────────────────
                 if is_cursor_row {
-                    // Build the full row text from VT cells — the PTY echo is the
-                    // source of truth for what's displayed. We do NOT maintain a
-                    // separate local buffer for the visible text.
+                    // Build styled layout job for cursor row
                     let mut job = egui::text::LayoutJob::default();
                     let mut seg_text = String::new();
                     let mut seg_fg = default_fg;
                     let mut seg_bg = egui::Color32::TRANSPARENT;
 
-                    let flush_seg = |job: &mut egui::text::LayoutJob, text: &str, fg: egui::Color32, bg: egui::Color32| {
+                    let flush = |job: &mut egui::text::LayoutJob, text: &str, fg: egui::Color32, bg: egui::Color32| {
                         if text.is_empty() { return; }
                         job.append(text, 0.0, egui::TextFormat {
                             font_id: egui::FontId::monospace(font_size),
-                            color: fg,
-                            background: bg,
+                            color: fg, background: bg,
                             ..Default::default()
                         });
                     };
 
                     for (col_idx, cell) in row.iter().enumerate() {
-                        let is_cur = col_idx == cursor_col;
                         let ch = if cell.ch == '\0' { ' ' } else { cell.ch };
-                        let (fg, bg) = if is_cur {
-                            // Block cursor: invert
+                        let (fg, bg) = if col_idx == cursor_col {
                             (bg_color, egui::Color32::from_rgb(205, 214, 244))
                         } else {
                             (
@@ -140,66 +128,42 @@ pub fn show_terminal(
                             )
                         };
                         if fg != seg_fg || bg != seg_bg {
-                            flush_seg(&mut job, &seg_text, seg_fg, seg_bg);
+                            flush(&mut job, &seg_text, seg_fg, seg_bg);
                             seg_text.clear();
-                            seg_fg = fg;
-                            seg_bg = bg;
+                            seg_fg = fg; seg_bg = bg;
                         }
                         seg_text.push(ch);
                     }
-                    flush_seg(&mut job, &seg_text, seg_fg, seg_bg);
+                    flush(&mut job, &seg_text, seg_fg, seg_bg);
                     if job.text.is_empty() {
                         job.append(" ", 0.0, egui::TextFormat {
                             font_id: egui::FontId::monospace(font_size),
-                            color: egui::Color32::TRANSPARENT,
-                            ..Default::default()
+                            color: egui::Color32::TRANSPARENT, ..Default::default()
                         });
                     }
 
-                    // Render the row text with dark underlay shadow
                     let row_resp = ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                         let galley = ui.fonts(|f| f.layout_job(job));
                         let (resp, painter) = ui.allocate_painter(galley.size(), egui::Sense::hover());
-                        let origin = resp.rect.min;
                         if shadow_enabled && shadow_alpha > 0 {
                             painter.rect_filled(
-                                resp.rect.expand2(egui::vec2(2.0, 1.0)),
-                                2.0,
+                                resp.rect.expand2(egui::vec2(2.0, 1.0)), 2.0,
                                 egui::Color32::from_black_alpha(shadow_alpha),
                             );
                         }
-                        painter.galley(origin, galley, egui::Color32::WHITE);
+                        painter.galley(resp.rect.min, galley, egui::Color32::WHITE);
                         resp
                     });
 
-                    // Invisible focus-capture overlay on the whole row rect.
-                    let input_id = ui.id().with("inline_input");
                     let row_rect = row_resp.response.rect;
-                    let focus_resp = ui.interact(row_rect, input_id, egui::Sense::click());
 
-                    if focus_resp.clicked() {
-                        ui.memory_mut(|m| m.request_focus(input_id));
-                    }
-                    ui.memory_mut(|m| {
-                        if m.focused().is_none() {
-                            m.request_focus(input_id);
-                        }
-                    });
-                    let has_focus = ui.memory(|m| m.has_focus(input_id));
+                    // Cursor position in terminal-local coordinates (for particles)
+                    cursor_screen_x = (row_rect.left() + cursor_col as f32 * char_w) - term_rect.left();
+                    cursor_screen_y = row_rect.center().y - term_rect.top();
 
-                    // ── Record cursor screen position for fire particles ───────
-                    // row_rect is in screen space. term_rect.min is the top-left of
-                    // the terminal panel. Subtracting it gives rect-relative coords
-                    // that match what draw_fire_overlay uses (rect.left/top + p.x/y).
-                    if tab.shader_effect == ShaderEffect::Fire {
-                        let cursor_screen_x = row_rect.left() + cursor_col as f32 * char_w;
-                        let cursor_screen_y = row_rect.center().y;
-                        tab.fire.last_emit_x = cursor_screen_x - term_rect.left();
-                        tab.fire.last_emit_y = cursor_screen_y - term_rect.top();
-                    }
-
-                    if has_focus && !tab.terminal.exited {
+                    // Keyboard input — ONLY for the focused terminal
+                    if is_focused_terminal && !tab.terminal.exited {
                         let events: Vec<egui::Event> = ui.ctx().input(|i| i.events.clone());
                         for ev in &events {
                             match ev {
@@ -209,12 +173,11 @@ pub fn show_terminal(
                                         let mut buf = [0u8; 4];
                                         let s = ch.encode_utf8(&mut buf);
                                         let _ = tab.terminal.write_to_pty(s.as_bytes());
-                                        if tab.shader_effect == ShaderEffect::Fire {
-                                            tab.fire.emit_keypress(
-                                                tab.fire.last_emit_x,
-                                                tab.fire.last_emit_y,
-                                            );
-                                        }
+                                        // Emit particles via the active particle plugin
+                                        let spawned = crate::particle_emit::emit_for_tab(
+                                            cursor_screen_x, cursor_screen_y, tab,
+                                        );
+                                        tab.particles.spawn(spawned);
                                     }
                                 }
                                 egui::Event::Key { key, pressed: true, modifiers, .. } => {
@@ -233,21 +196,13 @@ pub fn show_terminal(
                                         egui::Key::Escape     => { let _ = tab.terminal.write_to_pty(b"\x1b"); }
                                         egui::Key::Tab if !modifiers.shift => { let _ = tab.terminal.write_to_pty(b"\t"); }
                                         egui::Key::Tab        => { let _ = tab.terminal.write_to_pty(b"\x1b[Z"); }
-                                        egui::Key::C if modifiers.ctrl && !modifiers.shift => {
-                                            // Ctrl+C → SIGINT (interrupt current process)
-                                            let _ = tab.terminal.write_to_pty(b"\x03");
-                                        }
+                                        egui::Key::C if modifiers.ctrl && !modifiers.shift => { let _ = tab.terminal.write_to_pty(b"\x03"); }
                                         egui::Key::C if modifiers.ctrl && modifiers.shift => {
-                                            // Ctrl+Shift+C → copy to clipboard
-                                            // TODO: copy selected text; for now copy visible screen text
                                             let lines: Vec<String> = tab.terminal.vt.visible_cells()
                                                 .iter()
                                                 .map(|row| row.iter().map(|c| if c.ch == '\0' { ' ' } else { c.ch }).collect::<String>())
                                                 .collect();
-                                            let text = lines.join("\n");
-                                            if let Some(ref mut cb) = *clipboard {
-                                                let _ = cb.set_text(text);
-                                            }
+                                            if let Some(ref mut cb) = *clipboard { let _ = cb.set_text(lines.join("\n")); }
                                         }
                                         egui::Key::D if modifiers.ctrl => { let _ = tab.terminal.write_to_pty(b"\x04"); }
                                         egui::Key::L if modifiers.ctrl => { let _ = tab.terminal.write_to_pty(b"\x0c"); }
@@ -258,9 +213,7 @@ pub fn show_terminal(
                                         egui::Key::W if modifiers.ctrl => { let _ = tab.terminal.write_to_pty(b"\x17"); }
                                         egui::Key::V if modifiers.ctrl => {
                                             if let Some(ref mut cb) = *clipboard {
-                                                if let Ok(text) = cb.get_text() {
-                                                    let _ = tab.terminal.write_to_pty(text.as_bytes());
-                                                }
+                                                if let Ok(text) = cb.get_text() { let _ = tab.terminal.write_to_pty(text.as_bytes()); }
                                             }
                                         }
                                         _ => {}
@@ -270,12 +223,10 @@ pub fn show_terminal(
                             }
                         }
                     }
-
-
                     continue;
                 }
 
-                // ── Non-cursor rows: styled label ─────────────────────────────
+                // Non-cursor rows — styled label
                 let mut job = egui::text::LayoutJob::default();
                 let mut seg_text = String::new();
                 let mut seg_fg = default_fg;
@@ -285,262 +236,241 @@ pub fn show_terminal(
                     if text.is_empty() { return; }
                     job.append(text, 0.0, egui::TextFormat {
                         font_id: egui::FontId::monospace(font_size),
-                        color: fg,
-                        background: bg,
-                        ..Default::default()
+                        color: fg, background: bg, ..Default::default()
                     });
                 };
-
                 for cell in row.iter() {
-                    let (fg, bg) = (
-                        color_to_egui(&cell.attrs.fg, default_fg),
-                        match &cell.attrs.bg {
-                            Color::Default => egui::Color32::TRANSPARENT,
-                            other => color_to_egui(other, egui::Color32::TRANSPARENT),
-                        },
-                    );
+                    let fg = color_to_egui(&cell.attrs.fg, default_fg);
+                    let bg = match &cell.attrs.bg {
+                        Color::Default => egui::Color32::TRANSPARENT,
+                        other => color_to_egui(other, egui::Color32::TRANSPARENT),
+                    };
                     let ch = if cell.ch == '\0' { ' ' } else { cell.ch };
                     if fg != seg_fg || bg != seg_bg {
                         flush(&mut job, &seg_text, seg_fg, seg_bg);
-                        seg_text.clear();
-                        seg_fg = fg;
-                        seg_bg = bg;
+                        seg_text.clear(); seg_fg = fg; seg_bg = bg;
                     }
                     seg_text.push(ch);
                 }
                 flush(&mut job, &seg_text, seg_fg, seg_bg);
-
                 if job.text.is_empty() {
                     job.append(" ", 0.0, egui::TextFormat {
                         font_id: egui::FontId::monospace(font_size),
-                        color: egui::Color32::TRANSPARENT,
-                        ..Default::default()
+                        color: egui::Color32::TRANSPARENT, ..Default::default()
                     });
                 }
-
-                // Lay out once, paint shadow rect then real text
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                     let galley = ui.fonts(|f| f.layout_job(job));
                     let (resp, painter) = ui.allocate_painter(galley.size(), egui::Sense::hover());
-                    let origin = resp.rect.min;
-                    // Dark underlay behind the text — darkens background, no bloom
                     if shadow_enabled && shadow_alpha > 0 {
                         painter.rect_filled(
-                            resp.rect.expand2(egui::vec2(2.0, 1.0)),
-                            2.0,
+                            resp.rect.expand2(egui::vec2(2.0, 1.0)), 2.0,
                             egui::Color32::from_black_alpha(shadow_alpha),
                         );
                     }
-                    painter.galley(origin, galley, egui::Color32::WHITE);
+                    painter.galley(resp.rect.min, galley, egui::Color32::WHITE);
                 });
             }
         });
 
-    // Apply shader overlay on top of terminal content
-    apply_shader_overlay(ui, term_rect, tab, allow_shader_repaint);
+    // Particle overlay (on top of text, below any final shader post-process)
+    draw_particles_overlay(ui, term_rect, tab);
 
-    // Input is handled by the inline custom input field on the cursor row above.
-    // handle_keyboard_input is kept only for when the tab loses focus (e.g. overlays open).
-    if !tab.command_query.is_open && !tab.find_overlay.is_open {
-        handle_keyboard_input(ui, tab, clipboard, char_w);
-    }
+    // Shader overlay
+    apply_shader_overlay(ui, term_rect, tab, allow_shader_repaint);
 }
+
+// ── Shader overlay dispatcher ─────────────────────────────────────────────────
 
 fn apply_shader_overlay(ui: &mut egui::Ui, rect: egui::Rect, tab: &mut TabState, allow_repaint: bool) {
-    match tab.shader_effect {
-        ShaderEffect::None => {}
-        ShaderEffect::Crt  => draw_crt_overlay(ui, rect, &tab.shader_params),
-        ShaderEffect::Fire => draw_fire_overlay(ui, rect, tab, allow_repaint),
+    match tab.shader_effect.plugin_id.as_str() {
+        "none" | "" => {}
+        "crt"  => draw_crt_overlay(ui, rect, &tab.shader_effect.clone()),
+        "fire" => draw_fire_base_overlay(ui, rect, &tab.shader_effect.clone(), allow_repaint),
+        _ => {
+            // Unknown plugin — placeholder tint
+            ui.painter_at(rect).rect_filled(
+                rect, 0.0,
+                egui::Color32::from_rgba_unmultiplied(80, 40, 160, 30),
+            );
+        }
     }
 }
 
-/// CRT effect: horizontal scanlines + edge vignette + subtle chromatic tint.
-fn draw_crt_overlay(ui: &mut egui::Ui, rect: egui::Rect, params: &ridgeback_config::ShaderParams) {
+// ── CRT overlay ───────────────────────────────────────────────────────────────
+
+fn draw_crt_overlay(ui: &mut egui::Ui, rect: egui::Rect, effect: &ridgeback_config::ShaderEffectConfig) {
+    let scanline_intensity = effect.param_f32("scanline_intensity", 0.3);
+    let curvature          = effect.param_f32("curvature", 0.1);
+    let bloom_strength     = effect.param_f32("bloom_strength", 0.15);
     let painter = ui.painter_at(rect);
 
-    // ── Scanlines ─────────────────────────────────────────────────────────
-    let scanline_alpha = (params.scanline_intensity * 80.0) as u8;
-    let scanline_color = egui::Color32::from_black_alpha(scanline_alpha);
-    let line_spacing = 3.0_f32;
+    let scanline_alpha = (scanline_intensity * 80.0) as u8;
     let mut y = rect.top();
     while y < rect.bottom() {
         painter.line_segment(
             [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-            egui::Stroke::new(1.0, scanline_color),
+            egui::Stroke::new(1.0, egui::Color32::from_black_alpha(scanline_alpha)),
         );
-        y += line_spacing;
+        y += 3.0;
     }
-
-    // ── Vignette (darkened edges for curvature illusion) ──────────────────
-    let vignette_alpha = (params.curvature * 160.0) as u8;
-    // Left edge
-    painter.rect_filled(
+    let va = (curvature * 160.0) as u8;
+    // Four vignette edges
+    for r in [
         egui::Rect::from_min_size(rect.min, egui::vec2(rect.width() * 0.04, rect.height())),
-        0.0,
-        egui::Color32::from_black_alpha(vignette_alpha),
-    );
-    // Right edge
-    painter.rect_filled(
-        egui::Rect::from_min_size(
-            egui::pos2(rect.right() - rect.width() * 0.04, rect.top()),
-            egui::vec2(rect.width() * 0.04, rect.height()),
-        ),
-        0.0,
-        egui::Color32::from_black_alpha(vignette_alpha),
-    );
-    // Top edge
-    painter.rect_filled(
+        egui::Rect::from_min_size(egui::pos2(rect.right() - rect.width() * 0.04, rect.top()), egui::vec2(rect.width() * 0.04, rect.height())),
         egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), rect.height() * 0.03)),
-        0.0,
-        egui::Color32::from_black_alpha(vignette_alpha),
-    );
-    // Bottom edge
-    painter.rect_filled(
-        egui::Rect::from_min_size(
-            egui::pos2(rect.left(), rect.bottom() - rect.height() * 0.03),
-            egui::vec2(rect.width(), rect.height() * 0.03),
-        ),
-        0.0,
-        egui::Color32::from_black_alpha(vignette_alpha),
-    );
-
-    // ── Bloom: faint green tint overlay ───────────────────────────────────
-    let bloom_alpha = (params.bloom_strength * 18.0) as u8;
-    painter.rect_filled(
-        rect,
-        0.0,
-        egui::Color32::from_rgba_unmultiplied(0, 255, 80, bloom_alpha),
-    );
-
-    // ── Overall glassy tint ───────────────────────────────────────────────
-    painter.rect_filled(
-        rect,
-        0.0,
-        egui::Color32::from_black_alpha(15),
-    );
+        egui::Rect::from_min_size(egui::pos2(rect.left(), rect.bottom() - rect.height() * 0.03), egui::vec2(rect.width(), rect.height() * 0.03)),
+    ] {
+        painter.rect_filled(r, 0.0, egui::Color32::from_black_alpha(va));
+    }
+    let bloom_alpha = (bloom_strength * 18.0) as u8;
+    painter.rect_filled(rect, 0.0, egui::Color32::from_rgba_unmultiplied(0, 255, 80, bloom_alpha));
+    painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(15));
 }
 
-/// Fire effect: Doom-style cellular automaton base flame + particle embers + smoke.
-fn draw_fire_overlay(ui: &mut egui::Ui, rect: egui::Rect, tab: &mut TabState, allow_repaint: bool) {
-    let dt = ui.ctx().input(|i| i.unstable_dt).min(0.05);
-    let params = tab.shader_params.clone();
+// ── Fire base flame overlay (bottom edge cellular automaton) ──────────────────
 
-    // Step simulation and particles
-    tab.fire.update(dt, &params);
+fn draw_fire_base_overlay(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    effect: &ridgeback_config::ShaderEffectConfig,
+    allow_repaint: bool,
+) {
+    let intensity   = effect.param_f32("intensity", 1.0);
+    let height_frac = effect.param_f32("height", 0.25);
+
+    // Parse fire colour ramp from params
+    let col_base = parse_param_color(effect.param_color("color_base"), 0x1a, 0x00, 0x00);
+    let col_mid  = parse_param_color(effect.param_color("color_mid"),  0xff, 0x44, 0x00);
+    let col_top  = parse_param_color(effect.param_color("color_top"),  0xff, 0xdd, 0x00);
 
     let painter = ui.painter_at(rect);
+    let flame_h = rect.height() * height_frac * intensity;
+    let num_cols = (rect.width() / 4.0).round() as usize;
+    let dt = ui.ctx().input(|i| i.unstable_dt).min(0.05) as f64;
 
-    // ── Doom-style cellular automaton base flame ──────────────────────────
-    // The sim is in cell-space; map to pixel-space along the bottom edge.
-    let cell_h = 20usize;
-    let cell_w = tab.fire.sim.w;
-    // We render the top N rows of the sim as flame height
-    let flame_pixel_height = rect.height() * 0.28 * params.fire_intensity;
-    let cell_px_w = rect.width() / cell_w as f32;
-    let cell_px_h = flame_pixel_height / cell_h as f32;
-
-    for row in 0..cell_h {
-        for col in 0..cell_w {
-            let heat = tab.fire.sim.buf[row * cell_w + col];
-            if heat < 0.04 { continue; }
-
-            // Map heat 0..1 → fire palette
-            // 0.0–0.25 → black→dark red, 0.25–0.55 → dark red→orange,
-            // 0.55–0.80 → orange→yellow, 0.80–1.0 → yellow→white
-            let (r, g, b, a) = heat_to_rgba(heat, params.fire_intensity);
-
-            let px = rect.left() + col as f32 * cell_px_w;
-            let py = rect.bottom() - (cell_h - row) as f32 * cell_px_h;
-
-            // Each cell is a slightly rounded rect for a more organic look
+    // Simple per-frame noise-based base flame (no stored simulation state needed
+    // for the background layer — the tab's ParticleState handles the burst particles)
+    let time = ui.ctx().input(|i| i.time);
+    let col_w = rect.width() / num_cols as f32;
+    for col in 0..num_cols {
+        // noise: combine sin waves for organic flicker
+        let n = (((time * 4.3 + col as f64 * 0.7).sin()
+                + (time * 2.1 + col as f64 * 1.3).sin()) * 0.5 + 0.5) as f32;
+        let h = (n * flame_h).max(2.0);
+        let num_steps = 8usize;
+        for step in 0..num_steps {
+            let frac = step as f32 / num_steps as f32;
+            let heat = (1.0 - frac) * n;
+            if heat < 0.05 { continue; }
+            let (r, g, b) = blend_fire_ramp(heat, col_base, col_mid, col_top);
+            let alpha = (heat * intensity * 200.0).min(255.0) as u8;
+            let py = rect.bottom() - frac * h;
             painter.rect_filled(
                 egui::Rect::from_min_size(
-                    egui::pos2(px - 0.5, py - 0.5),
-                    egui::vec2(cell_px_w + 1.0, cell_px_h + 1.0),
+                    egui::pos2(rect.left() + col as f32 * col_w, py),
+                    egui::vec2(col_w + 0.5, h / num_steps as f32 + 0.5),
                 ),
-                1.0,
-                egui::Color32::from_rgba_unmultiplied(r, g, b, a),
+                0.0,
+                egui::Color32::from_rgba_unmultiplied(r, g, b, alpha),
             );
         }
     }
 
-    // ── Smoke particles (drawn below embers so embers appear on top) ──────
-    for p in &tab.fire.particles {
+    // Bottom shimmer line
+    let shimmer = (intensity * 40.0) as u8;
+    painter.rect_filled(
+        egui::Rect::from_min_size(egui::pos2(rect.left(), rect.bottom() - 3.0), egui::vec2(rect.width(), 3.0)),
+        0.0,
+        egui::Color32::from_rgba_unmultiplied(col_mid.0, col_mid.1, col_mid.2, shimmer),
+    );
+
+    let _ = dt; // suppress unused
+    if allow_repaint { ui.ctx().request_repaint(); }
+}
+
+fn blend_fire_ramp(heat: f32, base: (u8,u8,u8), mid: (u8,u8,u8), top: (u8,u8,u8)) -> (u8,u8,u8) {
+    let h = heat.clamp(0.0, 1.0);
+    if h < 0.5 {
+        let t = h / 0.5;
+        let r = lerp(base.0, mid.0, t);
+        let g = lerp(base.1, mid.1, t);
+        let b = lerp(base.2, mid.2, t);
+        (r, g, b)
+    } else {
+        let t = (h - 0.5) / 0.5;
+        let r = lerp(mid.0, top.0, t);
+        let g = lerp(mid.1, top.1, t);
+        let b = lerp(mid.2, top.2, t);
+        (r, g, b)
+    }
+}
+
+fn parse_param_color(hex: Option<&str>, dr: u8, dg: u8, db: u8) -> (u8,u8,u8) {
+    let hex = match hex { Some(h) => h, None => return (dr, dg, db) };
+    let hex = hex.trim_start_matches('#');
+    if hex.len() != 6 { return (dr, dg, db); }
+    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(dr);
+    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(dg);
+    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(db);
+    (r, g, b)
+}
+
+// ── Particle overlay ──────────────────────────────────────────────────────────
+
+/// Draw all live particles for the tab on top of the terminal text.
+pub fn draw_particles_overlay(ui: &mut egui::Ui, rect: egui::Rect, tab: &mut TabState) {
+    if tab.particles.particles.is_empty() { return; }
+    let dt = ui.ctx().input(|i| i.unstable_dt).min(0.05);
+    tab.particles.update(dt);
+
+    let painter = ui.painter_at(rect);
+
+    // Smoke first (behind embers)
+    for lp in &tab.particles.particles {
+        let p = &lp.event;
         if !p.is_smoke { continue; }
-        let t = 1.0 - (p.life / p.max_life);
-        let alpha = ((1.0 - t) * (1.0 - t) * 60.0) as u8; // 0.5 × 120
+        let life_frac = (p.life / 1.6_f32).clamp(0.0, 1.0);
+        let alpha = ((life_frac * life_frac) * 55.0) as u8;
         if alpha < 3 { continue; }
-        let grey = (60 + (t * 80.0) as u8).min(160);
+        let grey = (60.0 + (1.0 - life_frac) * 80.0) as u8;
         painter.circle_filled(
-            egui::pos2(rect.left() + p.x, rect.top() + p.y),
-            p.radius,
+            egui::pos2(rect.left() + p.x, rect.top() + p.y), p.radius,
             egui::Color32::from_rgba_unmultiplied(grey, grey, grey, alpha),
         );
     }
-
-    // ── Fire ember particles ──────────────────────────────────────────────
-    for p in &tab.fire.particles {
+    // Embers on top
+    for lp in &tab.particles.particles {
+        let p = &lp.event;
         if p.is_smoke { continue; }
-        let t = 1.0 - (p.life / p.max_life);
-        let alpha = ((1.0 - t * t) * 115.0) as u8; // 0.5 × 230
+        let life_frac = (p.life / 0.9_f32).clamp(0.0, 1.0);
+        let alpha = ((life_frac * life_frac) * 200.0) as u8;
         if alpha < 5 { continue; }
-        let heat = (p.heat).max(0.0).min(1.0);
-        let (r, g, b, _) = heat_to_rgba(heat, 1.0);
-        // Core bright spot
+        let heat = p.heat.clamp(0.0, 1.0);
+        let (r, g, b) = heat_to_rgb(heat);
         painter.circle_filled(
-            egui::pos2(rect.left() + p.x, rect.top() + p.y),
-            p.radius,
+            egui::pos2(rect.left() + p.x, rect.top() + p.y), p.radius,
             egui::Color32::from_rgba_unmultiplied(r, g, b, alpha),
         );
-        // Soft glow halo
         painter.circle_filled(
-            egui::pos2(rect.left() + p.x, rect.top() + p.y),
-            p.radius * 2.2,
+            egui::pos2(rect.left() + p.x, rect.top() + p.y), p.radius * 2.2,
             egui::Color32::from_rgba_unmultiplied(r, g / 2, 0, alpha / 6),
         );
     }
 
-    // ── Subtle ambient heat shimmer at the very bottom ────────────────────
-    let shimmer_alpha = (params.fire_intensity * 40.0) as u8;
-    painter.rect_filled(
-        egui::Rect::from_min_size(
-            egui::pos2(rect.left(), rect.bottom() - 3.0),
-            egui::vec2(rect.width(), 3.0),
-        ),
-        0.0,
-        egui::Color32::from_rgba_unmultiplied(255, 140, 0, shimmer_alpha),
-    );
-
-    // Keep animating only when allowed (respects update_in_background setting)
-    if allow_repaint {
+    if !tab.particles.particles.is_empty() {
         ui.ctx().request_repaint();
     }
 }
 
-/// Map a heat value 0..1 to an RGBA fire colour.
-/// Palette (inspired by real fire blackbody radiation):
-///   0.00–0.20 → black → deep red
-///   0.20–0.50 → deep red → bright orange
-///   0.50–0.75 → bright orange → yellow
-///   0.75–1.00 → yellow → white
-fn heat_to_rgba(heat: f32, intensity: f32) -> (u8, u8, u8, u8) {
-    let h = heat.max(0.0).min(1.0);
-    let (r, g, b) = if h < 0.20 {
-        let t = h / 0.20;
-        (lerp(0, 160, t), 0u8, 0u8)
-    } else if h < 0.50 {
-        let t = (h - 0.20) / 0.30;
-        (lerp(160, 255, t), lerp(0, 100, t), 0u8)
-    } else if h < 0.75 {
-        let t = (h - 0.50) / 0.25;
-        (255u8, lerp(100, 220, t), lerp(0, 20, t))
-    } else {
-        let t = (h - 0.75) / 0.25;
-        (255u8, lerp(220, 255, t), lerp(20, 200, t))
-    };
-    let alpha = ((h * 0.85 + 0.15) * intensity * 220.0).min(255.0) as u8;
-    (r, g, b, alpha)
+fn heat_to_rgb(heat: f32) -> (u8, u8, u8) {
+    let h = heat.clamp(0.0, 1.0);
+    if h < 0.25      { (lerp(0, 160, h / 0.25), 0, 0) }
+    else if h < 0.55 { (lerp(160, 255, (h - 0.25) / 0.30), lerp(0, 100, (h - 0.25) / 0.30), 0) }
+    else if h < 0.80 { (255, lerp(100, 220, (h - 0.55) / 0.25), lerp(0, 20, (h - 0.55) / 0.25)) }
+    else             { (255, lerp(220, 255, (h - 0.80) / 0.20), lerp(20, 200, (h - 0.80) / 0.20)) }
 }
 
 #[inline(always)]
@@ -549,46 +479,7 @@ fn lerp(a: u8, b: u8, t: f32) -> u8 {
 }
 
 
-fn handle_keyboard_input(
-    ui: &mut egui::Ui,
-    tab: &mut TabState,
-    _clipboard: &mut Option<arboard::Clipboard>,
-    _char_w: f32,
-) {
-    // The inline custom input on the cursor row handles all events when it has
-    // focus (which is almost always).  Only fall through here for edge cases
-    // where the terminal has no cursor row rendered (e.g. exited process).
-    let inline_id = ui.id().with("inline_input");
-    if ui.memory(|m| m.has_focus(inline_id)) {
-        return; // already handled
-    }
-    if tab.terminal.exited { return; }
-
-    // Ctrl-only sequences that should work even without inline focus
-    let events: Vec<egui::Event> = ui.ctx().input(|i| i.events.clone());
-    for event in &events {
-        if let egui::Event::Key { key, pressed: true, modifiers, .. } = event {
-            let bytes: Option<&[u8]> = match key {
-                egui::Key::C if modifiers.ctrl && !modifiers.shift => Some(b"\x03"),
-                egui::Key::D if modifiers.ctrl => Some(b"\x04"),
-                egui::Key::L if modifiers.ctrl => Some(b"\x0c"),
-                _ => None,
-            };
-            if let Some(b) = bytes {
-                let _ = tab.terminal.write_to_pty(b);
-            }
-        }
-    }
-}
-
-fn handle_key(
-    _key: egui::Key,
-    _modifiers: egui::Modifiers,
-    _input: &mut ridgeback_core::InputBuffer,
-    _clipboard: &mut Option<arboard::Clipboard>,
-) -> InputAction {
-    InputAction::None
-}
+// ── Colour helpers ────────────────────────────────────────────────────────────
 
 fn color_to_egui(color: &Color, default: egui::Color32) -> egui::Color32 {
     match color {
@@ -600,38 +491,27 @@ fn color_to_egui(color: &Color, default: egui::Color32) -> egui::Color32 {
 
 fn indexed_color_to_rgb(idx: u8) -> egui::Color32 {
     match idx {
-        0  => egui::Color32::from_rgb(0x45, 0x47, 0x5a),
-        1  => egui::Color32::from_rgb(0xf3, 0x8b, 0xa8),
-        2  => egui::Color32::from_rgb(0xa6, 0xe3, 0xa1),
-        3  => egui::Color32::from_rgb(0xf9, 0xe2, 0xaf),
-        4  => egui::Color32::from_rgb(0x89, 0xb4, 0xfa),
-        5  => egui::Color32::from_rgb(0xf5, 0xc2, 0xe7),
-        6  => egui::Color32::from_rgb(0x94, 0xe2, 0xd5),
-        7  => egui::Color32::from_rgb(0xba, 0xc2, 0xde),
-        8  => egui::Color32::from_rgb(0x58, 0x5b, 0x70),
-        9  => egui::Color32::from_rgb(0xf3, 0x8b, 0xa8),
-        10 => egui::Color32::from_rgb(0xa6, 0xe3, 0xa1),
-        11 => egui::Color32::from_rgb(0xf9, 0xe2, 0xaf),
-        12 => egui::Color32::from_rgb(0x89, 0xb4, 0xfa),
-        13 => egui::Color32::from_rgb(0xf5, 0xc2, 0xe7),
-        14 => egui::Color32::from_rgb(0x94, 0xe2, 0xd5),
-        15 => egui::Color32::from_rgb(0xa6, 0xad, 0xc8),
-        16..=231 => {
-            let n = idx - 16;
-            let b = (n % 6) * 51;
-            let g = ((n / 6) % 6) * 51;
-            let r = (n / 36) * 51;
-            egui::Color32::from_rgb(r, g, b)
-        }
-        232..=255 => {
-            let v = (idx - 232) * 10 + 8;
-            egui::Color32::from_gray(v)
-        }
+        0  => egui::Color32::from_rgb(0x45,0x47,0x5a),
+        1  => egui::Color32::from_rgb(0xf3,0x8b,0xa8),
+        2  => egui::Color32::from_rgb(0xa6,0xe3,0xa1),
+        3  => egui::Color32::from_rgb(0xf9,0xe2,0xaf),
+        4  => egui::Color32::from_rgb(0x89,0xb4,0xfa),
+        5  => egui::Color32::from_rgb(0xf5,0xc2,0xe7),
+        6  => egui::Color32::from_rgb(0x94,0xe2,0xd5),
+        7  => egui::Color32::from_rgb(0xba,0xc2,0xde),
+        8  => egui::Color32::from_rgb(0x58,0x5b,0x70),
+        9  => egui::Color32::from_rgb(0xf3,0x8b,0xa8),
+        10 => egui::Color32::from_rgb(0xa6,0xe3,0xa1),
+        11 => egui::Color32::from_rgb(0xf9,0xe2,0xaf),
+        12 => egui::Color32::from_rgb(0x89,0xb4,0xfa),
+        13 => egui::Color32::from_rgb(0xf5,0xc2,0xe7),
+        14 => egui::Color32::from_rgb(0x94,0xe2,0xd5),
+        15 => egui::Color32::from_rgb(0xa6,0xad,0xc8),
+        16..=231 => { let n = idx-16; egui::Color32::from_rgb((n/36)*51, ((n/6)%6)*51, (n%6)*51) }
+        232..=255 => { let v = (idx-232)*10+8; egui::Color32::from_gray(v) }
     }
 }
 
-/// Parse a "#RRGGBB" hex colour string into an egui Color32.
-/// Returns None if the string is not a valid 6-digit hex colour.
 fn parse_hex_color(hex: &str) -> Option<egui::Color32> {
     let hex = hex.trim().strip_prefix('#')?;
     if hex.len() != 6 { return None; }
@@ -641,3 +521,6 @@ fn parse_hex_color(hex: &str) -> Option<egui::Color32> {
     Some(egui::Color32::from_rgb(r, g, b))
 }
 
+// Keep InputAction in scope (used by handle_key stub)
+#[allow(dead_code)]
+fn _unused_input_action() -> InputAction { InputAction::None }

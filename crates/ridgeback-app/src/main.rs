@@ -7,6 +7,10 @@ mod find_overlay;
 mod command_query;
 mod casting;
 mod toast;
+mod tab_drag;
+mod split_pane;
+mod group_tab_bar;
+mod particle_emit;
 
 use anyhow::Result;
 

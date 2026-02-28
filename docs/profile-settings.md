@@ -169,18 +169,34 @@ open_settings = "Ctrl+,"
 save_session = "Ctrl+S"
 find_in_session = "Ctrl+F"
 ai_command_query = "Ctrl+/"
+split_horizontal = "Ctrl+Shift+D"
+split_vertical = "Ctrl+Shift+E"
+close_pane = "Ctrl+Shift+W"
+reload_plugins = "Ctrl+Shift+P"
+focus_next_group = "Ctrl+Alt+Right"
+focus_prev_group = "Ctrl+Alt+Left"
+move_tab_to_next_group = "Ctrl+Alt+Shift+Right"
+move_tab_to_prev_group = "Ctrl+Alt+Shift+Left"
 ```
 
 | Action | Default | Description |
 |---|---|---|
-| `new_tab` | `Ctrl+T` | Open a new terminal tab with the default profile |
-| `close_tab` | `Ctrl+W` | Close the active terminal tab |
-| `next_tab` | `Ctrl+Tab` | Switch to the next tab |
-| `prev_tab` | `Ctrl+Shift+Tab` | Switch to the previous tab |
+| `new_tab` | `Ctrl+T` | Open a new tab in the focused group |
+| `close_tab` | `Ctrl+W` | Close the active tab |
+| `next_tab` | `Ctrl+Tab` | Switch to the next tab within the group |
+| `prev_tab` | `Ctrl+Shift+Tab` | Switch to the previous tab within the group |
 | `open_settings` | `Ctrl+,` | Toggle the settings window |
 | `save_session` | `Ctrl+S` | Save the current session's output to a file |
 | `find_in_session` | `Ctrl+F` | Open the find-in-session overlay |
 | `ai_command_query` | `Ctrl+/` | Open the AI command query overlay |
+| `split_horizontal` | `Ctrl+Shift+D` | Split right — create a new tab group beside the current one |
+| `split_vertical` | `Ctrl+Shift+E` | Split down — create a new tab group below the current one |
+| `close_pane` | `Ctrl+Shift+W` | Close the entire focused tab group |
+| `reload_plugins` | `Ctrl+Shift+P` | Reload all Lua plugins without restarting |
+| `focus_next_group` | `Ctrl+Alt+Right` | Move focus to the next tab group |
+| `focus_prev_group` | `Ctrl+Alt+Left` | Move focus to the previous tab group |
+| `move_tab_to_next_group` | `Ctrl+Alt+Shift+Right` | Move the active tab to the next group |
+| `move_tab_to_prev_group` | `Ctrl+Alt+Shift+Left` | Move the active tab to the previous group |
 
 ### Key Names
 
@@ -315,6 +331,14 @@ open_settings = "Ctrl+,"
 save_session = "Ctrl+S"
 find_in_session = "Ctrl+F"
 ai_command_query = "Ctrl+/"
+split_horizontal = "Ctrl+Shift+D"
+split_vertical = "Ctrl+Shift+E"
+close_pane = "Ctrl+Shift+W"
+reload_plugins = "Ctrl+Shift+P"
+focus_next_group = "Ctrl+Alt+Right"
+focus_prev_group = "Ctrl+Alt+Left"
+move_tab_to_next_group = "Ctrl+Alt+Shift+Right"
+move_tab_to_prev_group = "Ctrl+Alt+Shift+Left"
 
 [ai]
 enabled = true

@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-pub use profile::{ColorScheme, CursorStyle, Profile, ShaderEffect, ShaderParams, ShellType};
+pub use profile::{ColorScheme, CursorStyle, Profile, ShaderEffect, ShaderParams, ShellType,
+                   ShaderEffectConfig, TypingParticlesConfig};
 pub use keybindings::KeyBindings;
 pub use rendering::RenderingConfig;
 pub use ai::AiConfig;
@@ -175,5 +176,95 @@ impl Config {
             .get(&self.general.default_profile)
             .map(|p| (self.general.default_profile.as_str(), p))
             .or_else(|| self.profiles.iter().next().map(|(k, v)| (k.as_str(), v)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::profile::{ShaderEffectConfig, TypingParticlesConfig};
+
+    /// Old config format: `shader_effect = "none"` — plain string.
+    #[test]
+    fn deserialize_shader_effect_from_string() {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            shader_effect: ShaderEffectConfig,
+        }
+        let toml_str = r#"shader_effect = "none""#;
+        let w: Wrapper = toml::from_str(toml_str).unwrap();
+        assert_eq!(w.shader_effect.plugin_id, "none");
+        assert!(w.shader_effect.params.is_empty());
+
+        let toml_str = r#"shader_effect = "fire""#;
+        let w: Wrapper = toml::from_str(toml_str).unwrap();
+        assert_eq!(w.shader_effect.plugin_id, "fire");
+        // Should populate default fire params
+        assert!(w.shader_effect.params.contains_key("intensity"));
+
+        let toml_str = r#"shader_effect = "crt""#;
+        let w: Wrapper = toml::from_str(toml_str).unwrap();
+        assert_eq!(w.shader_effect.plugin_id, "crt");
+        assert!(w.shader_effect.params.contains_key("scanline_intensity"));
+    }
+
+    /// New config format: `shader_effect = { plugin_id = "fire", ... }` — table.
+    #[test]
+    fn deserialize_shader_effect_from_table() {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            shader_effect: ShaderEffectConfig,
+        }
+        let toml_str = r#"
+[shader_effect]
+plugin_id = "fire"
+
+[shader_effect.params]
+intensity = 0.8
+"#;
+        let w: Wrapper = toml::from_str(toml_str).unwrap();
+        assert_eq!(w.shader_effect.plugin_id, "fire");
+        assert_eq!(w.shader_effect.param_f32("intensity", 0.0), 0.8);
+    }
+
+    /// Old config format for typing_particles: plain string.
+    #[test]
+    fn deserialize_typing_particles_from_string() {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            typing_particles: TypingParticlesConfig,
+        }
+        let toml_str = r#"typing_particles = "none""#;
+        let w: Wrapper = toml::from_str(toml_str).unwrap();
+        assert_eq!(w.typing_particles.plugin_id, "none");
+    }
+
+    /// New config format for typing_particles: table.
+    #[test]
+    fn deserialize_typing_particles_from_table() {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            typing_particles: TypingParticlesConfig,
+        }
+        let toml_str = r#"
+[typing_particles]
+plugin_id = "fire"
+"#;
+        let w: Wrapper = toml::from_str(toml_str).unwrap();
+        assert_eq!(w.typing_particles.plugin_id, "fire");
+    }
+
+    /// Full profile with old-style string shader_effect should parse.
+    #[test]
+    fn full_profile_with_legacy_shader_string() {
+        let toml_str = r#"
+name = "Default"
+shell = "powershell.exe"
+shader_effect = "fire"
+typing_particles = "none"
+"#;
+        let p: profile::Profile = toml::from_str(toml_str).unwrap();
+        assert_eq!(p.shader_effect.plugin_id, "fire");
+        assert_eq!(p.typing_particles.plugin_id, "none");
     }
 }

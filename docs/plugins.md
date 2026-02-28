@@ -1,6 +1,6 @@
 # Plugin System
 
-Ridgeback's plugin system lets you extend the terminal with custom functionality — from querying the buffer to exporting sessions in custom formats. Plugins can be written in **Rust** (compiled into the binary) or **Lua 5.4** (loaded at runtime from script files).
+Ridgeback supports plugins written in **Rust** (compiled in) or **Lua 5.4** (loaded from script files at runtime). Plugins can query terminal content, export sessions, register shader effects, and add typing particle effects.
 
 ---
 
@@ -154,6 +154,81 @@ end
 local json = "[\n  " .. table.concat(lines, ",\n  ") .. "\n]"
 return json
 ```
+
+---
+
+## Shader Plugins
+
+Lua plugins can register custom shader effects that appear in the profile settings.
+
+Call `ridgeback.register_shader(id, display_name, wgsl_path, param_schema)`:
+
+```lua
+local params = {
+    {
+        key     = "scanline_intensity",
+        label   = "Scanline intensity",
+        type    = "float",
+        min     = 0.0,
+        max     = 1.0,
+        default = 0.3,
+    },
+    {
+        key     = "curvature",
+        label   = "Screen curvature",
+        type    = "float",
+        min     = 0.0,
+        max     = 1.0,
+        default = 0.1,
+    },
+}
+
+ridgeback.register_shader("crt", "📺 CRT", nil, params)
+```
+
+- `id` — unique string identifier (used in profile config as `shader_effect = "crt"`)
+- `display_name` — shown in the Settings UI
+- `wgsl_path` — path to a `.wgsl` shader file (relative to `shaders/`), or `nil` to use the built-in egui renderer
+- `param_schema` — list of parameter descriptors with `key`, `label`, `type`, and optionally `min`, `max`, `default`
+
+Supported param types: `"float"`, `"int"`, `"bool"`, `"color"` (hex string), `"text"`
+
+See `assets/plugins/crt_shader.lua` and `assets/plugins/fire_shader.lua` for examples.
+
+---
+
+## Particle Plugins
+
+Lua plugins can register typing particle effects that fire when the user presses keys.
+
+Call `ridgeback.register_particles(id, display_name, param_schema)`:
+
+```lua
+local params = {
+    {
+        key     = "count",
+        label   = "Sparkles per keypress",
+        type    = "int",
+        min     = 1,
+        max     = 40,
+        default = 12,
+    },
+    {
+        key     = "speed",
+        label   = "Sparkle speed",
+        type    = "float",
+        min     = 10.0,
+        max     = 300.0,
+        default = 80.0,
+    },
+}
+
+ridgeback.register_particles("sparkle", "✨ Sparkles", params)
+```
+
+The engine calls the plugin's emit function on each keypress and renders the returned particles as circles with optional heat-based colouring and smoke effects.
+
+See `assets/plugins/fire_particles.lua` and `assets/plugins/sparkle_particles.lua` for examples.
 
 ---
 
