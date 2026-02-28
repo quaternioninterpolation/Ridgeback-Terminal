@@ -14,6 +14,8 @@ An experimental terminal emulator written in Rust, exploring ways to add more fu
 Ridgeback is a terminal wrapper that integrates GPU shader effects, AI-assisted command suggestions, split pane tab groups, and a Lua plugin system. 
 It runs on Windows, macOS, and Linux.
 
+<img width="1197" height="819" alt="image" src="https://github.com/user-attachments/assets/055beff1-1939-4276-9311-ee1f637e6182" />
+
 ## Features
 
 - **Tab groups & split panes** — split the window into groups, each with their own tabs and terminals (like an IDE)
