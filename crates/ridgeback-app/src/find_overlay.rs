@@ -10,6 +10,8 @@ pub struct FindOverlay {
     pub ignore_case: bool,
     pub matches: Vec<SearchMatch>,
     pub current_match: usize,
+    /// True on the first frame after opening — used to request focus exactly once.
+    just_opened: bool,
 }
 
 impl FindOverlay {
@@ -21,14 +23,24 @@ impl FindOverlay {
             ignore_case: true,
             matches: Vec::new(),
             current_match: 0,
+            just_opened: false,
         }
     }
 
     pub fn toggle(&mut self) {
         self.is_open = !self.is_open;
-        if !self.is_open {
+        if self.is_open {
+            self.just_opened = true;
+        } else {
             self.matches.clear();
         }
+    }
+
+    /// Returns the absolute line number of the current match (for scroll-to),
+    /// or `None` if there are no matches.
+    pub fn current_match_line(&self) -> Option<usize> {
+        if self.matches.is_empty() { return None; }
+        Some(self.matches[self.current_match].line)
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui, terminal: &Terminal) {
@@ -40,16 +52,19 @@ impl FindOverlay {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     // Search input
+                    let te_id = ui.id().with("find_input");
                     let response = ui.add(
                         egui::TextEdit::singleline(&mut self.query)
+                            .id(te_id)
                             .desired_width(300.0)
                             .hint_text("Search...")
                             .font(egui::FontId::monospace(13.0)),
                     );
 
-                    // Auto-focus the input when overlay opens
-                    if self.is_open {
+                    // Request focus only on the first frame after opening
+                    if self.just_opened {
                         response.request_focus();
+                        self.just_opened = false;
                     }
 
                     // Search when text changes or enter is pressed

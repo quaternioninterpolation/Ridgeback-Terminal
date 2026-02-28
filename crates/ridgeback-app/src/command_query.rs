@@ -18,6 +18,8 @@ pub struct CommandQueryOverlay {
     pub error_message: Option<String>,
     /// Channel to receive AI results from background thread.
     result_rx: Option<mpsc::Receiver<QueryResult>>,
+    /// True on first frame after opening — used to request focus exactly once.
+    just_opened: bool,
 }
 
 impl CommandQueryOverlay {
@@ -30,6 +32,7 @@ impl CommandQueryOverlay {
             is_loading: false,
             error_message: None,
             result_rx: None,
+            just_opened: false,
         }
     }
 
@@ -42,6 +45,7 @@ impl CommandQueryOverlay {
             self.error_message = None;
             self.is_loading = false;
             self.result_rx = None;
+            self.just_opened = true;
         }
     }
 
@@ -166,15 +170,20 @@ impl CommandQueryOverlay {
                 ui.set_min_width(overlay_width - 24.0);
 
                 // Input field
+                let te_id = ui.id().with("ai_query_input");
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.query)
+                        .id(te_id)
                         .desired_width(ui.available_width())
                         .hint_text("Describe what you want to do...")
                         .font(egui::FontId::monospace(14.0)),
                 );
 
-                // Auto-focus
-                response.request_focus();
+                // Request focus only on the first frame after opening
+                if self.just_opened {
+                    response.request_focus();
+                    self.just_opened = false;
+                }
 
                 let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
 

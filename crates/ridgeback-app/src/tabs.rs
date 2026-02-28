@@ -5,6 +5,80 @@ use ridgeback_plugin::ParticleEvent;
 use crate::find_overlay::FindOverlay;
 use crate::command_query::CommandQueryOverlay;
 
+// ── Terminal text selection (mouse) ───────────────────────────────────────────
+
+/// A selection range across the terminal grid (rows are absolute: scrollback + visible).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalSelection {
+    /// Anchor point (where mouse-down happened).
+    pub anchor_row: usize,
+    pub anchor_col: usize,
+    /// Head point (where mouse currently is / was released).
+    pub head_row: usize,
+    pub head_col: usize,
+}
+
+impl TerminalSelection {
+    /// Returns (start_row, start_col, end_row, end_col) in sorted order.
+    pub fn sorted(&self) -> (usize, usize, usize, usize) {
+        if (self.anchor_row, self.anchor_col) <= (self.head_row, self.head_col) {
+            (self.anchor_row, self.anchor_col, self.head_row, self.head_col)
+        } else {
+            (self.head_row, self.head_col, self.anchor_row, self.anchor_col)
+        }
+    }
+
+    /// Check if a given (row, col) is inside the selection.
+    pub fn contains(&self, row: usize, col: usize) -> bool {
+        let (sr, sc, er, ec) = self.sorted();
+        if row < sr || row > er { return false; }
+        if sr == er {
+            // Single-row selection
+            col >= sc && col < ec
+        } else if row == sr {
+            col >= sc
+        } else if row == er {
+            col < ec
+        } else {
+            true
+        }
+    }
+
+    /// Extract selected text from scrollback lines + visible grid rows.
+    pub fn selected_text(&self, scrollback_lines: &[String], visible_rows: &[Vec<ridgeback_core::cell::Cell>]) -> String {
+        let (sr, sc, er, ec) = self.sorted();
+        let mut result = String::new();
+        let scrollback_count = scrollback_lines.len();
+
+        for row in sr..=er {
+            let line_text: String = if row < scrollback_count {
+                scrollback_lines[row].clone()
+            } else {
+                let grid_row = row - scrollback_count;
+                if grid_row < visible_rows.len() {
+                    visible_rows[grid_row].iter().map(|c| if c.ch == '\0' { ' ' } else { c.ch }).collect()
+                } else {
+                    continue;
+                }
+            };
+
+            let chars: Vec<char> = line_text.chars().collect();
+            let start_col = if row == sr { sc } else { 0 };
+            let end_col = if row == er { ec.min(chars.len()) } else { chars.len() };
+            let start_col = start_col.min(chars.len());
+
+            if start_col < end_col {
+                let slice: String = chars[start_col..end_col].iter().collect();
+                result.push_str(slice.trim_end());
+            }
+            if row < er {
+                result.push('\n');
+            }
+        }
+        result
+    }
+}
+
 // ── Live particle state (plugin-driven) ───────────────────────────────────────
 
 /// Runtime state for a single live particle.
@@ -86,8 +160,12 @@ pub struct TabState {
     pub typing_particles: TypingParticlesConfig,
     /// Display title shown in the tab bar.
     pub tab_title: String,
-    /// The current inline input line buffer.
-    pub inline_input: String,
+    /// Mouse text selection state.
+    pub terminal_selection: Option<TerminalSelection>,
+    /// Whether a mouse drag selection is currently in progress.
+    pub selection_in_progress: bool,
+    /// Position where right-click context menu was triggered.
+    pub context_menu_pos: Option<egui::Pos2>,
     /// Live particle simulation state (fed by particle plugins).
     pub particles: ParticleState,
     /// Open animation progress 0.0 → 1.0.
@@ -145,7 +223,9 @@ impl TabGroup {
             shader_effect: profile.shader_effect.clone(),
             typing_particles: profile.typing_particles.clone(),
             tab_title,
-            inline_input: String::new(),
+            terminal_selection: None,
+            selection_in_progress: false,
+            context_menu_pos: None,
             particles: ParticleState::new(),
             open_anim: 0.0,
             close_anim: 0.0,

@@ -12,8 +12,8 @@ local params = {
         label   = "Scanline intensity",
         type    = "float",
         min     = 0.0,
-        max     = 1.0,
-        default = 0.3,
+        max     = 2.0,
+        default = 1.0,
     },
     {
         key     = "curvature",
@@ -21,7 +21,7 @@ local params = {
         type    = "float",
         min     = 0.0,
         max     = 1.0,
-        default = 0.1,
+        default = 0.0,
     },
     {
         key     = "bloom_strength",
@@ -29,7 +29,7 @@ local params = {
         type    = "float",
         min     = 0.0,
         max     = 1.0,
-        default = 0.15,
+        default = 0.0,
     },
 }
 
