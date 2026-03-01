@@ -30,6 +30,10 @@ It runs on Windows, macOS, and Linux.
 
 ## Getting Started
 
+### Easy Installation
+Grab the latest release from the Releases for your platform of choice.
+https://github.com/quaternioninterpolation/Ridgeback-Terminal/releases
+
 ### Requirements
 
 - Rust 1.75+ ([rustup](https://rustup.rs/))
@@ -39,7 +43,7 @@ It runs on Windows, macOS, and Linux.
 ### Build & Run
 
 ```bash
-git clone https://github.com/your-username/ridgeback.git
+git clone https://github.com/quaternioninterpolation/Ridgeback-Terminal
 cd ridgeback
 cargo run --release
 ```
