@@ -1,0 +1,16 @@
+# ──────────────────────────────────────────────────────────────
+# Ridgeback Build Constants
+# ──────────────────────────────────────────────────────────────
+# This file is the single source of truth for the application
+# version. It is read by:
+#   • crates/ridgeback-app/build.rs  → sets RIDGEBACK_VERSION env
+#   • .github/workflows/release.yml  → tags & names the release
+#
+# Bump the version here before creating a release branch.
+# ──────────────────────────────────────────────────────────────
+
+[version]
+major = 0
+minor = 1
+patch = 0
+

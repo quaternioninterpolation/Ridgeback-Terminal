@@ -18,8 +18,8 @@ const MOD: &str = "Cmd";
 #[cfg(not(target_os = "macos"))]
 const MOD: &str = "Ctrl";
 
-/// Application version.
-const VERSION: &str = "0.1";
+/// Application version (read from build_constants.toml at compile time via build.rs).
+const VERSION: &str = env!("RIDGEBACK_VERSION");
 /// Build code derived from git commit count (set by build.rs).
 const BUILD_CODE: &str = concat!("RBTC:", env!("RIDGEBACK_COMMIT_COUNT"));
 

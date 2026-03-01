@@ -25,3 +25,8 @@ arboard = "3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 egui-phosphor = "0.7"
 serde_json = { workspace = true }
+
+[build-dependencies]
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+

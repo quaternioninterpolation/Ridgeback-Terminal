@@ -14,19 +14,25 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Extract version from branch name (release/x.y.z → x.y.z)
+  # Extract version from build_constants.toml (single source of truth)
   # ---------------------------------------------------------------------------
   prepare:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Extract version from branch
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read version from build_constants.toml
         id: version
         run: |
-          VERSION="${GITHUB_REF#refs/heads/release/}"
+          MAJOR=$(grep '^major' build_constants.toml | head -1 | sed 's/[^0-9]//g')
+          MINOR=$(grep '^minor' build_constants.toml | head -1 | sed 's/[^0-9]//g')
+          PATCH=$(grep '^patch' build_constants.toml | head -1 | sed 's/[^0-9]//g')
+          VERSION="${MAJOR}.${MINOR}.${PATCH}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Detected version: $VERSION"
+          echo "Detected version from build_constants.toml: $VERSION"
 
   # ---------------------------------------------------------------------------
   # Build matrix — Windows, Linux, macOS (x86-64 + Apple Silicon)
