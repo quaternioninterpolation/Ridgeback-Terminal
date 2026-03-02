@@ -48,7 +48,11 @@ SRC_PNG="assets/images/icon.png"
 ICNS_OUT="assets/macos/icon.icns"
 
 BUNDLE_ID="com.ridgeback.terminal"
-VERSION="0.1.0"
+# Read version from the single source of truth: build_constants.toml
+_MAJOR=$(grep 'major' build_constants.toml | head -1 | sed 's/[^0-9]//g')
+_MINOR=$(grep 'minor' build_constants.toml | head -1 | sed 's/[^0-9]//g')
+_PATCH=$(grep 'patch' build_constants.toml | head -1 | sed 's/[^0-9]//g')
+VERSION="${_MAJOR}.${_MINOR}.${_PATCH}"
 MIN_MACOS="10.15"
 COPYRIGHT="Copyright © 2026 Ridgeback contributors"
 

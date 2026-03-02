@@ -1,16 +1,21 @@
 # ──────────────────────────────────────────────────────────────
 # Ridgeback Build Constants
 # ──────────────────────────────────────────────────────────────
-# This file is the single source of truth for the application
-# version. It is read by:
-#   • crates/ridgeback-app/build.rs  → sets RIDGEBACK_VERSION env
-#   • .github/workflows/release.yml  → tags & names the release
+# This file is the **single source of truth** for the application
+# version. It is consumed by:
+#   • crates/ridgeback-app/build.rs   → sets RIDGEBACK_VERSION env
+#   • scripts/bundle-macos.sh         → macOS .app bundle version
+#   • scripts/sync-version.sh         → syncs Cargo.toml workspace version
+#   • .github/workflows/release.yml   → tags & names the release
 #
-# Bump the version here before creating a release branch.
+# To release a new version:
+#   1. Bump the version here
+#   2. Run: ./scripts/sync-version.sh
+#   3. See docs/releasing.md for full instructions
 # ──────────────────────────────────────────────────────────────
 
 [version]
 major = 0
 minor = 1
-patch = 0
+patch = 2
 

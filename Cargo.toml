@@ -9,6 +9,9 @@ members = [
     "crates/ridgeback-app",
 ]
 
+[workspace.package]
+version = "0.1.0"
+
 [workspace.dependencies]
 # Serialization
 serde = { version = "1", features = ["derive"] }
