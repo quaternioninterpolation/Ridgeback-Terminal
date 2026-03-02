@@ -48,6 +48,18 @@ cd ridgeback
 cargo run --release
 ```
 
+#### OSX Builds
+
+# Debug build
+```bash
+./scripts/bundle-macos.sh
+```
+
+# Release build
+```bash
+./scripts/bundle-macos.sh --release
+```
+
 ### Configuration
 
 On first launch a default config is created at:

@@ -30,12 +30,6 @@ serde_json = { workspace = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 ridgeback-ai = { path = "../ridgeback-ai", features = ["metal"] }
 
-[package.metadata.bundle]
-name = "SysMonitor"
-identifier = "xx.yyy.sysmonitor"
-icon = ["assets/SysMonitor.icns"]
-
 [build-dependencies]
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
-
