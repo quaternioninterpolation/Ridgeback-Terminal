@@ -2,6 +2,9 @@ use egui;
 use ridgeback_config::Config;
 use ridgeback_plugin::{ShaderPluginHost, shader_plugin::ParamType};
 use crate::casting::CastManager;
+use ridgeback_ai::LocalModelManager;
+use ridgeback_ai::local_manager::{LocalModelStatus, detect_devices};
+use crate::toast::{Toast, ToastManager};
 
 /// Platform modifier key label: "Cmd" on macOS, "Ctrl" elsewhere.
 #[cfg(target_os = "macos")]
@@ -54,6 +57,8 @@ impl SettingsWindow {
         config: &mut Config,
         cast_manager: &mut CastManager,
         shader_host: &ShaderPluginHost,
+        local_model_manager: &LocalModelManager,
+        toasts: &mut ToastManager,
     ) -> Vec<String> {
         let mut saved_profile_keys: Vec<String> = Vec::new();
 
@@ -88,7 +93,7 @@ impl SettingsWindow {
                     SettingsTab::Profiles => self.show_profiles(ui, config, shader_host),
                     SettingsTab::Shortcuts => self.show_shortcuts(ui, config),
                     SettingsTab::Rendering => self.show_rendering(ui, config),
-                    SettingsTab::Ai => self.show_ai(ui, config),
+                    SettingsTab::Ai => self.show_ai(ui, config, local_model_manager, toasts),
                     SettingsTab::Plugins => self.show_plugins(ui, shader_host),
                     SettingsTab::CastShare => crate::casting::show_cast_panel(ui, cast_manager),
                 }
@@ -319,7 +324,7 @@ impl SettingsWindow {
 
     // ── AI tab ────────────────────────────────────────────────────────────────
 
-    fn show_ai(&mut self, ui: &mut egui::Ui, _config: &Config) {
+    fn show_ai(&mut self, ui: &mut egui::Ui, _config: &Config, local_model_manager: &LocalModelManager, toasts: &mut ToastManager) {
         ui.label(egui::RichText::new("AI Settings").strong());
         ui.add_space(8.0);
 
@@ -359,17 +364,7 @@ impl SettingsWindow {
                     });
                 }
                 ridgeback_config::ai::AiBackendType::Local => {
-                    egui::Grid::new("local_settings").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-                        ui.label("HuggingFace Repo:"); ui.text_edit_singleline(&mut ai.backends.local.model_repo); ui.end_row();
-                        ui.label("Quantization:"); ui.text_edit_singleline(&mut ai.backends.local.quantization); ui.end_row();
-                        ui.label("Device:");
-                        egui::ComboBox::from_id_salt("local_device").selected_text(&ai.backends.local.device).show_ui(ui, |ui| {
-                            ui.selectable_value(&mut ai.backends.local.device, "auto".to_string(), "Auto");
-                            ui.selectable_value(&mut ai.backends.local.device, "cpu".to_string(), "CPU");
-                            ui.selectable_value(&mut ai.backends.local.device, "cuda".to_string(), "CUDA");
-                        });
-                        ui.end_row();
-                    });
+                    show_local_ai_section(ui, &mut ai.backends.local, local_model_manager, toasts);
                 }
             }
 
@@ -435,6 +430,256 @@ impl SettingsWindow {
             format!("Press {MOD}+Shift+P to reload plugins without restarting.")
         ).color(egui::Color32::from_gray(140)).italics());
     }
+}
+
+// ── Local AI settings section (free function to avoid borrow issues) ──────────
+
+fn show_local_ai_section(
+    ui: &mut egui::Ui,
+    local: &mut ridgeback_config::ai::LocalModelConfig,
+    manager: &LocalModelManager,
+    toasts: &mut ToastManager,
+) {
+    // ── HuggingFace URL ──────────────────────────────────────────
+    ui.label(egui::RichText::new("🤗 HuggingFace Model").strong());
+    ui.add_space(4.0);
+
+    egui::Grid::new("local_ai_url").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+        ui.label("URL:");
+        let url_response = ui.add(
+            egui::TextEdit::singleline(&mut local.huggingface_url)
+                .desired_width(400.0)
+                .hint_text("https://huggingface.co/owner/model")
+        );
+        if url_response.changed() {
+            manager.update_config(local);
+        }
+        ui.end_row();
+    });
+
+    ui.add_space(4.0);
+
+    // ── Device selection ─────────────────────────────────────────
+    let devices = detect_devices();
+    ui.horizontal(|ui| {
+        ui.label("Device:");
+        let current_label = if local.device == "auto" {
+            let best = devices.iter().find(|d| d.recommended);
+            format!("Auto ({})", best.map(|d| d.label.as_str()).unwrap_or("CPU"))
+        } else {
+            devices.iter().find(|d| d.id == local.device)
+                .map(|d| d.label.clone())
+                .unwrap_or_else(|| local.device.clone())
+        };
+
+        egui::ComboBox::from_id_salt("local_device_combo")
+            .selected_text(&current_label)
+            .show_ui(ui, |ui| {
+                let auto_label = {
+                    let best = devices.iter().find(|d| d.recommended);
+                    format!("Auto ({})", best.map(|d| d.label.as_str()).unwrap_or("CPU"))
+                };
+                ui.selectable_value(&mut local.device, "auto".to_string(), auto_label);
+                for dev in &devices {
+                    let label = if dev.recommended {
+                        format!("{} ✦ recommended", dev.label)
+                    } else {
+                        dev.label.clone()
+                    };
+                    ui.selectable_value(&mut local.device, dev.id.clone(), label);
+                }
+            });
+    });
+
+    ui.add_space(8.0);
+    ui.separator();
+
+    // ── Model status ─────────────────────────────────────────────
+    let status = manager.status();
+
+    match &status {
+        LocalModelStatus::NotDownloaded => {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("○ Not downloaded").color(egui::Color32::from_gray(140)));
+            });
+
+            // Estimate size warning
+            ui.label(
+                egui::RichText::new("⚠ The Qwen2.5-Coder-1.5B model is ~3 GB. Ensure sufficient disk space and bandwidth.")
+                    .color(egui::Color32::from_rgb(200, 180, 100))
+                    .size(11.0)
+            );
+            ui.add_space(4.0);
+
+            if ui.button("⬇  Download Model").clicked() {
+                // Push a sticky progress toast
+                let progress_done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let toast = Toast::progress(
+                    "Downloading model…",
+                    std::sync::Arc::clone(&manager.downloaded_bytes),
+                    std::sync::Arc::clone(&manager.total_bytes),
+                    std::sync::Arc::clone(&progress_done),
+                );
+                toasts.push(toast);
+
+                // Start the download
+                let ctx = ui.ctx().clone();
+                let done_flag = progress_done;
+                manager.start_download(move || {
+                    ctx.request_repaint();
+                });
+
+                // Spawn a watcher to set the done flag when download finishes
+                let mgr_clone = manager.clone();
+                let ctx2 = ui.ctx().clone();
+                std::thread::spawn(move || {
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                        if !mgr_clone.is_downloading() {
+                            done_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                            ctx2.request_repaint();
+                            break;
+                        }
+                    }
+                });
+            }
+        }
+
+        LocalModelStatus::Downloading { downloaded_bytes, total_bytes } => {
+            let fraction = if *total_bytes > 0 {
+                *downloaded_bytes as f32 / *total_bytes as f32
+            } else {
+                0.0
+            };
+            let pct = (fraction * 100.0) as u32;
+
+            ui.label(egui::RichText::new("⬇ Downloading…").color(egui::Color32::from_rgb(100, 200, 160)));
+            ui.add_space(4.0);
+
+            ui.add(
+                egui::ProgressBar::new(fraction)
+                    .text(format!("{}% — {}/{}", pct, format_size(*downloaded_bytes), format_size(*total_bytes)))
+                    .animate(true)
+            );
+
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new("Download in progress. You can close this panel — progress is shown in the toast bar.")
+                    .size(11.0).color(egui::Color32::from_gray(130))
+            );
+
+            ui.ctx().request_repaint();
+        }
+
+        LocalModelStatus::Downloaded { date, size_bytes } => {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("● Downloaded").color(egui::Color32::from_rgb(100, 200, 130)));
+            });
+
+            egui::Grid::new("local_model_info").num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
+                ui.label(egui::RichText::new("Size:").color(egui::Color32::from_gray(160)));
+                ui.label(format_size(*size_bytes));
+                ui.end_row();
+
+                ui.label(egui::RichText::new("Downloaded:").color(egui::Color32::from_gray(160)));
+                ui.label(date);
+                ui.end_row();
+
+                if let Some(path) = local.model_path() {
+                    ui.label(egui::RichText::new("Location:").color(egui::Color32::from_gray(160)));
+                    ui.label(egui::RichText::new(path.display().to_string()).size(10.0).color(egui::Color32::from_gray(120)));
+                    ui.end_row();
+                }
+            });
+
+            ui.add_space(4.0);
+            if ui.button("🗑  Delete Model").clicked() {
+                manager.delete_model();
+            }
+        }
+
+        LocalModelStatus::Starting => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(egui::RichText::new("Starting…").color(egui::Color32::from_rgb(180, 200, 255)));
+                ui.label(egui::RichText::new("— loading model into memory").color(egui::Color32::from_gray(140)).size(11.0));
+            });
+            ui.ctx().request_repaint();
+        }
+
+        LocalModelStatus::Running => {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("● Running").color(egui::Color32::from_rgb(80, 220, 120)));
+                ui.label(egui::RichText::new("— model loaded and ready for inference").color(egui::Color32::from_gray(140)).size(11.0));
+            });
+        }
+
+        LocalModelStatus::Error(msg) => {
+            ui.label(egui::RichText::new(format!("✖ Error: {}", msg)).color(egui::Color32::from_rgb(255, 120, 120)));
+            ui.add_space(4.0);
+            if ui.button("↻  Retry").clicked() {
+                manager.detect();
+            }
+        }
+    }
+
+    ui.add_space(8.0);
+
+    // ── Inference controls (only when downloaded, starting, or running) ─────
+    let show_inference_controls = matches!(
+        &status,
+        LocalModelStatus::Downloaded { .. } | LocalModelStatus::Starting | LocalModelStatus::Running
+    );
+
+    if show_inference_controls {
+        ui.separator();
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new("Inference Server").strong());
+        ui.add_space(4.0);
+
+        match &status {
+            LocalModelStatus::Starting => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(egui::RichText::new("Starting…").color(egui::Color32::from_rgb(180, 200, 255)));
+                });
+                ui.label(
+                    egui::RichText::new("Loading model weights — this may take a moment.")
+                        .size(11.0).color(egui::Color32::from_gray(130))
+                );
+                ui.ctx().request_repaint();
+            }
+            LocalModelStatus::Running => {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("● Running").color(egui::Color32::from_rgb(80, 220, 120)));
+                    if ui.button("■  Stop").clicked() {
+                        manager.stop_inference();
+                    }
+                });
+            }
+            LocalModelStatus::Downloaded { .. } => {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("○ Stopped").color(egui::Color32::from_gray(140)));
+                    if ui.button("▶  Start").clicked() {
+                        manager.start_inference();
+                        ui.ctx().request_repaint();
+                    }
+                });
+                ui.label(
+                    egui::RichText::new("Start the inference server to use local AI for autocomplete and command queries.")
+                        .size(11.0).color(egui::Color32::from_gray(130))
+                );
+            }
+            _ => {}
+        }
+    }
+
+    // Context length control
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.label("Context length:");
+        ui.add(egui::Slider::new(&mut local.context_length, 256..=8192).text("tokens"));
+    });
 }
 
 // ── Shader effect section ─────────────────────────────────────────────────────
@@ -638,3 +883,20 @@ fn open_folder(path: &std::path::Path) -> std::io::Result<()> {
         std::process::Command::new("xdg-open").arg(path).spawn().map(|_| ())
     }
 }
+
+/// Format byte count in human-readable form.
+fn format_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+    if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.0} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+

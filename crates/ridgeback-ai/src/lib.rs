@@ -9,6 +9,8 @@
 
 pub mod backend;
 pub mod service;
+pub mod local_manager;
 
 pub use backend::{AiBackend, CompletionRequest, CompletionResponse, AiMessage, AiRole};
 pub use service::AiService;
+pub use local_manager::LocalModelManager;

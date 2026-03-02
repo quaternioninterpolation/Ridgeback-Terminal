@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// AI feature configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,10 +77,55 @@ pub struct ClaudeConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LocalModelConfig {
-    pub model_repo: String,
-    pub quantization: String,
+    /// Full HuggingFace URL, e.g. "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct"
+    pub huggingface_url: String,
+    /// Inference device: "auto", "cpu", "metal", "cuda"
     pub device: String,
+    /// Max context length for local inference.
     pub context_length: u32,
+}
+
+impl LocalModelConfig {
+    /// Returns the platform-appropriate models cache directory.
+    /// e.g. ~/.local/share/Ridgeback/models/ on Linux,
+    ///      ~/Library/Application Support/Ridgeback/models/ on macOS.
+    pub fn models_dir() -> Option<PathBuf> {
+        directories::ProjectDirs::from("", "", "Ridgeback")
+            .map(|d| d.data_dir().join("models"))
+    }
+
+    /// Extract "Owner/Repo" slug from the HuggingFace URL.
+    /// e.g. "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct" → "Qwen--Qwen2.5-Coder-1.5B-Instruct"
+    pub fn repo_slug(&self) -> Option<String> {
+        let url = self.huggingface_url.trim().trim_end_matches('/');
+        let prefix = "https://huggingface.co/";
+        if let Some(rest) = url.strip_prefix(prefix) {
+            let parts: Vec<&str> = rest.splitn(3, '/').collect();
+            if parts.len() >= 2 {
+                return Some(format!("{}--{}", parts[0], parts[1]));
+            }
+        }
+        None
+    }
+
+    /// Extract "owner/repo" from the HuggingFace URL for API calls.
+    pub fn repo_id(&self) -> Option<String> {
+        let url = self.huggingface_url.trim().trim_end_matches('/');
+        let prefix = "https://huggingface.co/";
+        if let Some(rest) = url.strip_prefix(prefix) {
+            let parts: Vec<&str> = rest.splitn(3, '/').collect();
+            if parts.len() >= 2 {
+                return Some(format!("{}/{}", parts[0], parts[1]));
+            }
+        }
+        None
+    }
+
+    /// Returns the local directory where this model's files are stored.
+    pub fn model_path(&self) -> Option<PathBuf> {
+        let slug = self.repo_slug()?;
+        Self::models_dir().map(|d| d.join(slug))
+    }
 }
 
 impl Default for AiConfig {
@@ -162,8 +208,7 @@ impl Default for ClaudeConfig {
 impl Default for LocalModelConfig {
     fn default() -> Self {
         Self {
-            model_repo: String::new(),
-            quantization: "Q4_K".to_string(),
+            huggingface_url: "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct".to_string(),
             device: "auto".to_string(),
             context_length: 2048,
         }

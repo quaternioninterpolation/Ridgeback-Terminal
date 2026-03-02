@@ -253,6 +253,16 @@ impl InputBuffer {
         InputAction::Changed
     }
 
+    /// Replace the entire input buffer with new text, cursor at end.
+    pub fn set_text(&mut self, s: &str) {
+        self.save_undo();
+        self.text = s.to_string();
+        self.cursor = s.chars().count();
+        self.selection = None;
+        self.clear_ghost();
+        self.history_index = None;
+    }
+
     /// Delete character before cursor (Backspace).
     pub fn delete_back(&mut self) -> InputAction {
         self.save_undo();

@@ -25,3 +25,17 @@ arboard = "3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 egui-phosphor = "0.7"
 serde_json = { workspace = true }
+
+# Enable Metal GPU acceleration for local AI on macOS
+[target.'cfg(target_os = "macos")'.dependencies]
+ridgeback-ai = { path = "../ridgeback-ai", features = ["metal"] }
+
+[package.metadata.bundle]
+name = "SysMonitor"
+identifier = "xx.yyy.sysmonitor"
+icon = ["assets/SysMonitor.icns"]
+
+[build-dependencies]
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+

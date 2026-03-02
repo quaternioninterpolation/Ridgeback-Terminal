@@ -400,27 +400,31 @@ impl AiBackend for ClaudeBackend {
 
 // ── Local Model Backend ─────────────────────────────────────────────────
 
-/// Local model backend for self-hosted LLMs (Ollama, llama.cpp server, etc.).
+/// Local model backend that delegates to the LocalModelManager inference engine.
 ///
-/// Communicates via the OpenAI-compatible API that local model servers expose.
+/// Instead of hitting an external API, this backend communicates with a
+/// locally-loaded model running on a background thread.
 pub struct LocalModelBackend {
-    pub model_repo: String,
-    pub quantization: String,
-    pub device: String,
-    pub context_length: u32,
-    /// Base URL for the local inference server (defaults to Ollama).
-    pub base_url: String,
+    pub manager: std::sync::Arc<std::sync::Mutex<Option<crate::local_manager::LocalModelManager>>>,
 }
 
 impl LocalModelBackend {
-    pub fn from_config(config: &ridgeback_config::ai::LocalModelConfig) -> Self {
+    pub fn from_config(_config: &ridgeback_config::ai::LocalModelConfig) -> Self {
+        // The manager will be injected later via set_manager
         Self {
-            model_repo: config.model_repo.clone(),
-            quantization: config.quantization.clone(),
-            device: config.device.clone(),
-            context_length: config.context_length,
-            base_url: "http://localhost:11434/v1".to_string(),
+            manager: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
+    }
+
+    pub fn new_with_manager(manager: crate::local_manager::LocalModelManager) -> Self {
+        Self {
+            manager: std::sync::Arc::new(std::sync::Mutex::new(Some(manager))),
+        }
+    }
+
+    pub fn set_manager(&self, manager: crate::local_manager::LocalModelManager) {
+        let mut guard = self.manager.lock().unwrap();
+        *guard = Some(manager);
     }
 }
 
@@ -430,7 +434,8 @@ impl AiBackend for LocalModelBackend {
     }
 
     fn is_available(&self) -> bool {
-        !self.model_repo.is_empty()
+        let guard = self.manager.lock().unwrap();
+        guard.as_ref().map_or(false, |m| m.is_running())
     }
 
     fn complete(
@@ -439,68 +444,44 @@ impl AiBackend for LocalModelBackend {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<CompletionResponse>> + Send + '_>>
     {
         Box::pin(async move {
-            use async_openai::config::OpenAIConfig;
-            use async_openai::types::{
-                ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
-                ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs,
-            };
-            use async_openai::Client;
+            tracing::info!("LocalModelBackend::complete called with {} messages", request.messages.len());
 
-            // Use OpenAI-compatible API (Ollama, llama.cpp server, etc.)
-            let config = OpenAIConfig::new()
-                .with_api_base(&self.base_url)
-                .with_api_key("local");
-            let client = Client::with_config(config);
-
-            let messages: Vec<ChatCompletionRequestMessage> = request
-                .messages
-                .iter()
-                .map(|m| match m.role {
-                    AiRole::System => ChatCompletionRequestSystemMessageArgs::default()
-                        .content(m.content.clone())
-                        .build()
-                        .unwrap()
-                        .into(),
-                    AiRole::User | AiRole::Assistant => {
-                        ChatCompletionRequestUserMessageArgs::default()
-                            .content(m.content.clone())
-                            .build()
-                            .unwrap()
-                            .into()
-                    }
-                })
-                .collect();
-
-            let model_name = if self.model_repo.is_empty() {
-                "llama3"
-            } else {
-                &self.model_repo
+            let manager = {
+                let guard = self.manager.lock().unwrap();
+                guard.clone().ok_or_else(|| anyhow::anyhow!("Local model manager not initialized"))?
             };
 
-            let mut req_builder = CreateChatCompletionRequestArgs::default();
-            req_builder
-                .model(model_name)
-                .messages(messages)
-                .max_tokens(request.max_tokens.min(self.context_length) as u16)
-                .temperature(request.temperature)
-                .n(request.n);
-
-            if let Some(stop) = &request.stop {
-                req_builder.stop(stop.clone());
+            if !manager.is_running() {
+                tracing::error!("LocalModelBackend::complete — manager is not running");
+                anyhow::bail!("Local model is not running");
             }
 
-            let req = req_builder.build()?;
-            let response = client.chat().create(req).await?;
+            // Build prompt from messages (ChatML format for Qwen2)
+            let mut prompt = String::new();
+            for msg in &request.messages {
+                let role = match msg.role {
+                    AiRole::System => "system",
+                    AiRole::User => "user",
+                    AiRole::Assistant => "assistant",
+                };
+                prompt.push_str(&format!("<|im_start|>{}\n{}<|im_end|>\n", role, msg.content));
+            }
+            prompt.push_str("<|im_start|>assistant\n");
 
-            let choices: Vec<String> = response
-                .choices
-                .iter()
-                .filter_map(|c| c.message.content.clone())
-                .collect();
+            tracing::info!("LocalModelBackend: built ChatML prompt ({} chars), calling complete_blocking with max_tokens={}", prompt.len(), request.max_tokens);
+
+            let text = manager.complete_blocking(
+                prompt,
+                request.max_tokens,
+                request.temperature,
+                request.stop,
+            )?;
+
+            tracing::info!("LocalModelBackend: got response ({} chars)", text.len());
 
             Ok(CompletionResponse {
-                choices,
-                model: response.model,
+                choices: vec![text],
+                model: "local-qwen2".to_string(),
             })
         })
     }

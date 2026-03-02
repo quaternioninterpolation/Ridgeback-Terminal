@@ -126,17 +126,25 @@ d:\Dev\RustTerm\
 ### `ridgeback-ai` — AI Integration
 
 **Path**: `crates/ridgeback-ai/src/`  
-**Key deps**: `async-openai 0.25`, `reqwest 0.12` (json), `futures 0.3`, `tokio-stream 0.1`, `ridgeback-config`
+**Key deps**: `async-openai 0.25`, `reqwest 0.12` (json, stream), `futures 0.3`, `tokio-stream 0.1`, `candle-core 0.8`, `candle-nn 0.8`, `candle-transformers 0.8`, `tokenizers 0.21`, `chrono 0.4`, `directories 5`, `ridgeback-config`
 
 | File | Purpose |
 |---|---|
-| `lib.rs` | Re-exports `AiBackend`, `AiService`, message types, all backend structs. |
+| `lib.rs` | Re-exports `AiBackend`, `AiService`, `LocalModelManager`, message types, all backend structs. |
 | `backend.rs` | `AiBackend` trait (`name()`, `is_available()`, `complete()` → `Pin<Box<Future<Result<CompletionResponse>>>>`). Shared types: `AiRole`, `AiMessage`, `CompletionRequest`, `CompletionResponse`. **Four backend implementations**: |
 | | • `LmStudioBackend` — `async-openai` client with custom `base_url`, OpenAI-compatible local API |
 | | • `OpenAiBackend` — `async-openai` client with standard OpenAI endpoint + API key |
 | | • `ClaudeBackend` — raw `reqwest` POST to `api.anthropic.com/v1/messages`, `x-api-key` + `anthropic-version` headers, handles system message separately per Anthropic API spec |
-| | • `LocalModelBackend` — `async-openai` client pointing at `localhost:11434/v1` (Ollama/llama.cpp compatible), respects `context_length` from config |
-| `service.rs` | `AiService` — high-level coordinator. `new()` wires all 4 backends via exhaustive `match` on `AiBackendType`. `suggest_completion()` for ghost text, `query_command()` for natural language → command generation. Both are shell-type-aware (all 7 variants including Wsl) and use `current_os_name()` (cfg-gated). |
+| | • `LocalModelBackend` — delegates to `LocalModelManager` inference channel (Qwen2 ChatML format). `is_available()` checks `manager.is_running()`. |
+| `service.rs` | `AiService` — high-level coordinator. `new(config, local_manager)` wires all 4 backends via exhaustive `match` on `AiBackendType`. `suggest_completion()` for ghost text, `query_command()` for natural language → command generation. Both are shell-type-aware (all 7 variants including Wsl) and use `current_os_name()` (cfg-gated). |
+| `local_manager.rs` | **Local model lifecycle manager.** `LocalModelManager` (thread-safe, `Clone`) manages download, detection, deletion, and inference hosting for HuggingFace models. Key features: |
+| | • **Detection**: checks `~/.local/share/Ridgeback/models/<slug>/` for `.meta.json` |
+| | • **Download**: streams files from HF API with atomic progress counters (`Arc<AtomicU64>`) for UI binding |
+| | • **Device probing**: `detect_devices()` returns available compute devices (CPU, Metal on macOS, CUDA with feature flag) |
+| | • **Inference**: loads Qwen2 models via `candle-transformers`, runs on background tokio task with `mpsc` channel for requests |
+the| | • **Status enum**: `NotDownloaded | Downloading | Downloaded | Starting | Running | Error` drives the settings UI |
+
+**Cargo features**: `cuda` (enables CUDA device support), `metal` (enables Metal GPU on macOS — compile-time feature)
 
 ---
 
@@ -168,11 +176,11 @@ d:\Dev\RustTerm\
 | `tab_drag.rs` | `TabDragState` with `DragSource { group_id, tab_idx }` for cross-group drag. Supports within-group reorder, cross-group movement via drop zones, and floating ghost tab rendering during drag. No multi-window tear-off (removed). |
 | `terminal_view.rs` | `show_terminal()` — renders the VT grid with color support (ANSI 256-color palette), cursor highlighting, scrollback, input line with selection/ghost text, keyboard event handling. `handle_key()` dispatches to `InputBuffer` methods and routes `InputAction` results to PTY/clipboard. |
 | `shortcuts.rs` | `ShortcutManager` — parses string keybindings into `KeyCombo` structs, checks egui input each frame. 16 actions including split/group navigation. |
-| `settings.rs` | `SettingsWindow` — tabbed settings UI (Profiles, Shortcuts, Rendering, AI, Plugins, Cast/Share). Shortcuts tab shows all 16 keybindings. |
+| `settings.rs` | `SettingsWindow` — tabbed settings UI (Profiles, Shortcuts, Rendering, AI, Plugins, Cast/Share). AI tab has interactive Local AI section with HuggingFace URL, device selector, download/delete/inference controls. Shortcuts tab shows all 16 keybindings. |
 | `find_overlay.rs` | `FindOverlay` — Ctrl+F search panel over the terminal. |
 | `command_query.rs` | `CommandQueryOverlay` — Ctrl+/ AI command query panel. |
 | `casting.rs` | `CastManager` + SSDP/DIAL discovery. Background thread for device scanning. |
-| `toast.rs` | `ToastManager` + `Toast` — transient notification system. |
+| `toast.rs` | `ToastManager` + `Toast` — transient notification system. Supports `Info`, `Warning`, `Error`, and sticky `Progress` levels. Progress toasts display a download progress bar with percentage and byte counts, dismissing automatically when `progress_done` flag is set. |
 | `particle_emit.rs` | Bridge between `TabState` and the active `ParticlePlugin`. |
 
 ---
@@ -255,7 +263,7 @@ All 6 previously-unchecked roadmap items have been fully implemented:
    - `OpenAiBackend` via async-openai (standard endpoint)
    - `ClaudeBackend` via reqwest (Anthropic Messages API)
    - `LocalModelBackend` via async-openai (Ollama/llama.cpp at localhost:11434)
-   - All 4 backends wired in `AiService::new()` via exhaustive match
+   - All 4 backends wired in `AiService::new(config, local_manager)` via exhaustive match
 
 5. **WSL profile support** ✅  
    - `Profile::default_wsl()` and `Profile::wsl_distro(name)` constructors
@@ -442,7 +450,6 @@ tokio-stream = "0.1"
 
 # ridgeback-plugin
 mlua = { version = "0.10", features = ["lua54", "vendored", "send"] }
-directories = "5"
 ```
 
 ---

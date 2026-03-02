@@ -3,6 +3,7 @@ use egui;
 use ridgeback_config::{Config, keybindings::ShortcutAction};
 use ridgeback_plugin::ShaderPluginHost;
 use ridgeback_ai::AiService;
+use ridgeback_ai::LocalModelManager;
 use crate::tabs::TabManager;
 use crate::shortcuts::ShortcutManager;
 use crate::settings::SettingsWindow;
@@ -30,6 +31,7 @@ pub struct RidgebackApp {
     pub settings_open: bool,
     pub settings: SettingsWindow,
     pub ai_service: AiService,
+    pub local_model_manager: LocalModelManager,
     pub clipboard: Option<arboard::Clipboard>,
     pub cast_manager: CastManager,
     pub bg_texture: Option<egui::TextureHandle>,
@@ -44,7 +46,8 @@ pub struct RidgebackApp {
 impl RidgebackApp {
     pub fn new(config: Config) -> Self {
         let shortcuts = ShortcutManager::from_config(&config.keybindings);
-        let ai_service = AiService::new(&config.ai);
+        let local_model_manager = LocalModelManager::new(&config.ai.backends.local);
+        let ai_service = AiService::new(&config.ai, Some(&local_model_manager));
         let mut tabs = TabManager::new();
 
         // Create the initial group with the default profile
@@ -77,6 +80,7 @@ impl RidgebackApp {
             config, tabs, shortcuts,
             settings_open: false,
             ai_service,
+            local_model_manager,
             clipboard: arboard::Clipboard::new().ok(),
             cast_manager: CastManager::new(),
             bg_texture: None,
@@ -109,6 +113,7 @@ impl RidgebackApp {
     fn handle_shortcut(&mut self, ctx: &egui::Context, action: ShortcutAction) {
         match action {
             ShortcutAction::NewTab => {
+                tracing::info!("NewTab shortcut triggered!");
                 if let Some((name, profile)) = self.preferred_profile() {
                     let _ = self.tabs.open_tab_in_focused(&name, &profile);
                     self.last_opened_profile = Some(name);
@@ -286,6 +291,7 @@ impl RidgebackApp {
                     self.tab_drag.start(group_id, tab_idx, origin);
                 }
                 TabBarAction::NewTab { profile_key } => {
+                    tracing::info!("TabBarAction::NewTab triggered for profile '{}'", profile_key);
                     if let Some(profile) = self.config.profiles.get(&profile_key).cloned() {
                         if let Some(g) = self.tabs.group_by_id_mut(group_id) {
                             let _ = g.open_tab(&profile_key, &profile);
@@ -393,7 +399,7 @@ impl eframe::App for RidgebackApp {
                 .max_size([max_w, max_h])
                 .show(ctx, |ui| {
                 let host_guard = self.shader_host.lock().unwrap();
-                saved_keys = self.settings.show(ui, &mut self.config, &mut self.cast_manager, &host_guard);
+                saved_keys = self.settings.show(ui, &mut self.config, &mut self.cast_manager, &host_guard, &self.local_model_manager, &mut self.toasts);
             });
 
             if !still_open {
@@ -442,6 +448,7 @@ impl eframe::App for RidgebackApp {
                     let focused_profile = &mut self.focused_profile_key;
                     let tabs_ptr = &mut self.tabs as *mut TabManager;
                     let ai_service = &self.ai_service;
+                    let local_mgr = &self.local_model_manager;
                     let tab_drag = &self.tab_drag;
                     let config_ptr = &self.config as *const Config;
 
@@ -491,10 +498,36 @@ impl eframe::App for RidgebackApp {
                                 ui.allocate_new_ui(egui::UiBuilder::new().max_rect(body_rect), |ui| {
                                     if tab.command_query.is_open {
                                         let st = tab.terminal.shell_type;
-                                        let cwd = std::env::current_dir().unwrap_or_default().to_string_lossy().to_string();
+                                        // Use the terminal's title (often contains CWD from shell integration)
+                                        // or fall back to the profile's configured working directory.
+                                        let cwd = tab.terminal.title()
+                                            .map(|t| t.to_string())
+                                            .unwrap_or_else(|| {
+                                                _config.profiles.get(&tab.terminal.profile_name)
+                                                    .map(|p| p.working_directory.to_string_lossy().to_string())
+                                                    .unwrap_or_else(|| "~".to_string())
+                                            });
                                         let hist = tab.terminal.last_n_lines(5);
-                                        if let Some(cmd) = tab.command_query.show(ui, &mut tab.terminal.input, ai_service, st, cwd, hist) {
-                                            let _ = tab.terminal.write_to_pty(cmd.as_bytes());
+                                        match tab.command_query.show(ui, &mut tab.terminal.input, ai_service, local_mgr, st, cwd, hist) {
+                                            Some(crate::command_query::CommandAction::Execute(ref cmd)) => {
+                                                tracing::info!("CommandQuery: EXECUTE '{}'", cmd);
+                                                // Write command + Return to PTY to execute
+                                                let _ = tab.terminal.write_to_pty(cmd.as_bytes());
+                                                let _ = tab.terminal.write_to_pty(b"\r");
+                                                // Redirect focus to terminal so no button captures stale keys
+                                                let input_id = egui::Id::new(("inline_input", tid));
+                                                ui.ctx().memory_mut(|m| m.request_focus(input_id));
+                                            }
+                                            Some(crate::command_query::CommandAction::Insert(ref cmd)) => {
+                                                tracing::info!("CommandQuery: INSERT '{}'", cmd);
+                                                // Write command to PTY without Return so it appears
+                                                // on the shell input line for the user to review/edit
+                                                let _ = tab.terminal.write_to_pty(cmd.as_bytes());
+                                                // Redirect focus to terminal so no button captures stale keys
+                                                let input_id = egui::Id::new(("inline_input", tid));
+                                                ui.ctx().memory_mut(|m| m.request_focus(input_id));
+                                            }
+                                            None => {}
                                         }
                                     }
                                     if tab.find_overlay.is_open {
@@ -614,13 +647,18 @@ impl RidgebackApp {
     fn show_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.style_mut().spacing.item_spacing.x = 4.0;
+            // Disable keyboard focus for toolbar buttons — prevents Enter from
+            // accidentally activating the + button after overlay closes.
+            ui.style_mut().interaction.selectable_labels = false;
 
             // Profile picker (+ new tab in focused group)
             let nr = ui.add(egui::Button::new(
                 egui::RichText::new(egui_phosphor::regular::PLUS).size(16.0).color(egui::Color32::from_gray(200)))
-                .fill(egui::Color32::from_gray(28)).stroke(egui::Stroke::NONE).min_size(egui::vec2(28.0, 28.0)));
+                .fill(egui::Color32::from_gray(28)).stroke(egui::Stroke::NONE).min_size(egui::vec2(28.0, 28.0))
+                .sense(egui::Sense::click()));
             // Left-click: open preferred (last-opened / default) profile directly
             if nr.clicked() {
+                tracing::info!("Toolbar + button clicked!");
                 if let Some((name, profile)) = self.preferred_profile() {
                     let _ = self.tabs.open_tab_in_focused(&name, &profile);
                     self.last_opened_profile = Some(name);

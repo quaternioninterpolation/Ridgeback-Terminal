@@ -8,6 +8,14 @@ pub enum QueryResult {
     Error(String),
 }
 
+/// Action returned by the command query overlay.
+pub enum CommandAction {
+    /// Execute the command immediately (Enter pressed).
+    Execute(String),
+    /// Insert the command into the terminal input buffer without executing (Tab pressed).
+    Insert(String),
+}
+
 /// The AI command query overlay (Ctrl+/).
 pub struct CommandQueryOverlay {
     pub is_open: bool,
@@ -18,8 +26,11 @@ pub struct CommandQueryOverlay {
     pub error_message: Option<String>,
     /// Channel to receive AI results from background thread.
     result_rx: Option<mpsc::Receiver<QueryResult>>,
-    /// True on first frame after opening — used to request focus exactly once.
+    /// True on first frame after opening -- used to request focus exactly once.
     just_opened: bool,
+    /// Deferred action from Tab press -- returned on the next frame so the overlay
+    /// stays open for one extra frame, preventing Tab from reaching the terminal.
+    pending_action: Option<CommandAction>,
 }
 
 impl CommandQueryOverlay {
@@ -33,6 +44,7 @@ impl CommandQueryOverlay {
             error_message: None,
             result_rx: None,
             just_opened: false,
+            pending_action: None,
         }
     }
 
@@ -46,6 +58,7 @@ impl CommandQueryOverlay {
             self.is_loading = false;
             self.result_rx = None;
             self.just_opened = true;
+            self.pending_action = None;
         }
     }
 
@@ -57,7 +70,7 @@ impl CommandQueryOverlay {
                     self.is_loading = false;
                     if suggestions.is_empty() {
                         self.error_message = Some(
-                            "No suggestions — check LM Studio is running at localhost:1234".to_string()
+                            "No suggestions - check that the AI backend is running".to_string()
                         );
                     } else {
                         self.suggestions = suggestions;
@@ -84,6 +97,7 @@ impl CommandQueryOverlay {
     pub fn submit_query(
         &mut self,
         ai_service: &ridgeback_ai::AiService,
+        local_model_manager: &ridgeback_ai::LocalModelManager,
         shell_type: ridgeback_config::ShellType,
         cwd: String,
         history: Vec<String>,
@@ -106,32 +120,44 @@ impl CommandQueryOverlay {
             self.is_loading = false;
             self.suggestions = vec![
                 format!("echo \"{}\"", query),
-                format!("# AI not connected — start LM Studio at localhost:1234"),
+                format!("# AI backend not available - check settings"),
             ];
-            self.error_message = Some("LM Studio not running — showing placeholder commands".to_string());
+            self.error_message = Some("AI backend not available - check AI settings and ensure the backend is running.".to_string());
             self.result_rx = None;
             return;
         }
 
-        // Clone config for the thread
+        // Clone config and manager for the thread
         let config = ai_service.config_clone();
+        let manager = local_model_manager.clone();
         std::thread::Builder::new()
             .name("ai-query".to_string())
             .spawn(move || {
-                // Build a fresh service on the thread
-                let svc = ridgeback_ai::AiService::new(&config);
+                tracing::info!("ai-query thread: creating AiService with backend={:?}", config.default_backend);
+                // Build a fresh service on the thread, passing the local manager
+                let svc = ridgeback_ai::AiService::new(&config, Some(&manager));
                 let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build();
                 match rt {
                     Ok(rt) => {
+                        tracing::info!("ai-query thread: calling query_command...");
                         let result = rt.block_on(svc.query_command(&query, shell_type, &cwd, &history));
                         match result {
-                            Ok(suggestions) => { let _ = tx.send(QueryResult::Suggestions(suggestions)); }
-                            Err(e) => { let _ = tx.send(QueryResult::Error(e.to_string())); }
+                            Ok(ref suggestions) => {
+                                tracing::info!("ai-query thread: got {} suggestions", suggestions.len());
+                                let _ = tx.send(QueryResult::Suggestions(suggestions.clone()));
+                            }
+                            Err(e) => {
+                                tracing::error!("ai-query thread: query_command error: {:#}", e);
+                                let _ = tx.send(QueryResult::Error(e.to_string()));
+                            }
                         }
                     }
-                    Err(e) => { let _ = tx.send(QueryResult::Error(e.to_string())); }
+                    Err(e) => {
+                        tracing::error!("ai-query thread: failed to create runtime: {}", e);
+                        let _ = tx.send(QueryResult::Error(e.to_string()));
+                    }
                 }
             })
             .ok();
@@ -142,14 +168,27 @@ impl CommandQueryOverlay {
         ui: &mut egui::Ui,
         _input_buffer: &mut InputBuffer,
         ai_service: &ridgeback_ai::AiService,
+        local_model_manager: &ridgeback_ai::LocalModelManager,
         shell_type: ridgeback_config::ShellType,
         cwd: String,
         history: Vec<String>,
-    ) -> Option<String> {
+    ) -> Option<CommandAction> {
+        // If there's a pending action from last frame's Tab/Enter press, return it now and close.
+        // This ensures the overlay stayed open for the key-press frame (blocking terminal input).
+        if let Some(pending) = self.pending_action.take() {
+            self.is_open = false;
+            // Clear any widget focus so no toolbar button captures stale keypresses.
+            // The terminal reads raw events directly, so it doesn't need egui focus.
+            ui.ctx().memory_mut(|m| {
+                m.surrender_focus(ui.id().with("ai_query_input"));
+            });
+            return Some(pending);
+        }
+
         // Poll for background results each frame
         self.poll_results();
 
-        let mut accepted: Option<String> = None;
+        let action: Option<CommandAction> = None;
 
         let available_width = ui.available_width();
         let overlay_width = (available_width * 0.7).min(600.0).max(300.0);
@@ -186,13 +225,23 @@ impl CommandQueryOverlay {
                 }
 
                 let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let tab_pressed = ui.input(|i| i.key_pressed(egui::Key::Tab));
 
-                if enter_pressed && !self.query.is_empty() && self.suggestions.is_empty() && !self.is_loading {
-                    self.submit_query(ai_service, shell_type, cwd.clone(), history.clone());
-                } else if enter_pressed && !self.suggestions.is_empty() {
+                if tab_pressed && !self.suggestions.is_empty() {
+                    // Defer to next frame: the overlay stays open this frame so
+                    // overlay_active == true and the terminal ignores the Tab key.
                     let selected = self.suggestions[self.selected_index].clone();
-                    accepted = Some(selected);
-                    self.is_open = false;
+                    self.pending_action = Some(CommandAction::Insert(selected));
+                    self.suggestions.clear();
+                    ui.ctx().request_repaint();
+                } else if enter_pressed && !self.query.is_empty() && self.suggestions.is_empty() && !self.is_loading {
+                    self.submit_query(ai_service, local_model_manager, shell_type, cwd.clone(), history.clone());
+                } else if enter_pressed && !self.suggestions.is_empty() {
+                    // Defer to next frame so the terminal doesn't also process Enter.
+                    let selected = self.suggestions[self.selected_index].clone();
+                    self.pending_action = Some(CommandAction::Execute(selected));
+                    self.suggestions.clear();
+                    ui.ctx().request_repaint();
                 }
 
                 // Handle Escape
@@ -257,7 +306,7 @@ impl CommandQueryOverlay {
                             .inner_margin(egui::Margin::symmetric(8.0, 4.0));
 
                         let resp = frame.show(ui, |ui| {
-                            let prefix = if is_selected { "▸ " } else { "  " };
+                            let prefix = if is_selected { "> " } else { "  " };
                             ui.label(
                                 egui::RichText::new(format!("{}{}", prefix, suggestion))
                                     .monospace()
@@ -267,8 +316,9 @@ impl CommandQueryOverlay {
                         }).response.interact(egui::Sense::click());
 
                         if resp.clicked() {
-                            accepted = Some(suggestion.clone());
-                            self.is_open = false;
+                            self.pending_action = Some(CommandAction::Execute(suggestion.clone()));
+                            self.suggestions.clear();
+                            ui.ctx().request_repaint();
                         }
                         if resp.hovered() {
                             self.selected_index = i;
@@ -277,13 +327,20 @@ impl CommandQueryOverlay {
                 }
 
                 ui.add_space(4.0);
+                let hint = if !self.suggestions.is_empty() {
+                    "Enter: execute | Tab: input without executing | Up/Down: navigate | Esc: close"
+                } else if self.is_loading {
+                    "Esc: close"
+                } else {
+                    "Enter: search | Esc: close"
+                };
                 ui.label(
-                    egui::RichText::new("Enter to submit · ↑↓ navigate · Esc to close")
+                    egui::RichText::new(hint)
                         .size(10.0)
                         .color(egui::Color32::from_gray(80)),
                 );
             });
 
-        accepted
+        action
     }
 }
