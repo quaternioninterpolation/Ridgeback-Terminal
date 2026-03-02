@@ -95,9 +95,26 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
-      # ── Package (Unix) ──
-      - name: Package artifact (Unix)
-        if: runner.os != 'Windows'
+      # ── macOS .app bundle ──
+      - name: Bundle macOS .app
+        if: runner.os == 'macOS'
+        run: |
+          chmod +x scripts/bundle-macos.sh
+          ./scripts/bundle-macos.sh --release --target=${{ matrix.target }} --skip-build
+
+      # ── Package (macOS — .app in a tar.gz) ──
+      - name: Package artifact (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p staging
+          cp -r target/release/Ridgeback.app staging/
+          cp README.md LICENSE staging/
+          cd staging
+          tar czf ../${{ matrix.artifact }}.tar.gz .
+
+      # ── Package (Linux) ──
+      - name: Package artifact (Linux)
+        if: runner.os == 'Linux'
         run: |
           mkdir -p staging
           cp target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} staging/
@@ -164,12 +181,14 @@ jobs:
             |---|---|---|
             | 🐧 Linux | x86_64 | `ridgeback-linux-x86_64.tar.gz` |
             | 🪟 Windows | x86_64 | `ridgeback-windows-x86_64.zip` |
-            | 🍎 macOS | x86_64 (Intel) | `ridgeback-macos-x86_64.tar.gz` |
-            | 🍎 macOS | aarch64 (Apple Silicon) | `ridgeback-macos-aarch64.tar.gz` |
+            | 🍎 macOS | x86_64 (Intel) | `ridgeback-macos-x86_64.tar.gz` (.app bundle) |
+            | 🍎 macOS | aarch64 (Apple Silicon) | `ridgeback-macos-aarch64.tar.gz` (.app bundle) |
 
             ### Installation
 
-            Download the archive for your platform, extract it, and run the `ridgeback` binary.
+            **macOS:** Download the archive for your architecture, extract it, and drag `Ridgeback.app` to your Applications folder.
+
+            **Linux / Windows:** Download the archive for your platform, extract it, and run the `ridgeback` binary.
             Assets (shaders, plugins, images) are bundled in the `assets/` directory alongside the binary.
             
             Please note that Ridgeback is not yet available on package managers like Homebrew or APT, so manual installation is required for now.
