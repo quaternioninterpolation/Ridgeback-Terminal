@@ -20,7 +20,6 @@ pub fn show_terminal(
     terminal_id: u64,
     is_focused_terminal: bool,
 ) {
-    let available = ui.available_size();
     let font_size = 14.0;
     let bg_color = egui::Color32::from_rgb(0x1e, 0x1e, 0x2e);
 
@@ -34,7 +33,22 @@ pub fn show_terminal(
         f.glyph_width(&egui::FontId::monospace(font_size), ' ')
     });
 
-    let term_rect = ui.available_rect_before_wrap();
+    let full_rect = ui.available_rect_before_wrap();
+
+    // Apply terminal padding (percentages of full rect dimensions)
+    let pad_left   = full_rect.width()  * (tab.padding.left   / 100.0);
+    let pad_right  = full_rect.width()  * (tab.padding.right  / 100.0);
+    let pad_top    = full_rect.height() * (tab.padding.top    / 100.0);
+    let pad_bottom = full_rect.height() * (tab.padding.bottom / 100.0);
+    let term_rect = egui::Rect::from_min_max(
+        egui::pos2(full_rect.left() + pad_left, full_rect.top() + pad_top),
+        egui::pos2(full_rect.right() - pad_right, full_rect.bottom() - pad_bottom),
+    );
+
+    // Fill padding area with bg color
+    if pad_left > 0.0 || pad_right > 0.0 || pad_top > 0.0 || pad_bottom > 0.0 {
+        ui.painter().rect_filled(full_rect, 0.0, bg_color);
+    }
 
     // Layer 1 — solid background
     ui.painter().rect_filled(term_rect, 0.0, bg_color);
@@ -76,12 +90,18 @@ pub fn show_terminal(
     let mut cursor_screen_x = 0.0f32;
     let mut cursor_screen_y = 0.0f32;
 
+    // Allocate the full rect so egui knows we used the space
+    ui.allocate_rect(full_rect, egui::Sense::hover());
+
+    // Create a child UI constrained to the padded term_rect for text content
+    let mut content_ui = ui.new_child(egui::UiBuilder::new().max_rect(term_rect));
+
     egui::ScrollArea::vertical()
         .id_salt(("terminal_output", terminal_id))
         .auto_shrink([false, false])
         .stick_to_bottom(true)
-        .show(ui, |ui| {
-            ui.set_min_width(available.x);
+        .show(&mut content_ui, |ui| {
+            ui.set_min_width(term_rect.width());
             ui.spacing_mut().item_spacing.y = 0.0;
             ui.visuals_mut().widgets.noninteractive.bg_fill = egui::Color32::TRANSPARENT;
             ui.visuals_mut().extreme_bg_color = egui::Color32::TRANSPARENT;
@@ -472,19 +492,49 @@ pub fn show_terminal(
         show_context_menu(ui, tab, clipboard, &scrollback_lines_ref, &visible_cells_ref);
     }
 
-    // Particle overlay (on top of text, below any final shader post-process)
+    // Particle overlay (positioned relative to padded text area)
     draw_particles_overlay(ui, term_rect, tab);
 
-    // Shader overlay
-    apply_shader_overlay(ui, term_rect, tab, allow_shader_repaint);
+    // Shader overlay — covers the full rect (not padded) so CRT distortion extends to edges
+    apply_shader_overlay(ui, full_rect, tab, allow_shader_repaint, bg_texture, default_fg, bg_color, font_size);
 }
 
 // ── Shader overlay dispatcher ─────────────────────────────────────────────────
 
-fn apply_shader_overlay(ui: &mut egui::Ui, rect: egui::Rect, tab: &mut TabState, allow_repaint: bool) {
+fn apply_shader_overlay(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    tab: &mut TabState,
+    allow_repaint: bool,
+    bg_texture: Option<&egui::TextureHandle>,
+    default_fg: egui::Color32,
+    bg_color: egui::Color32,
+    font_size: f32,
+) {
     match tab.shader_effect.plugin_id.as_str() {
         "none" | "" => {}
-        "crt"  => draw_crt_overlay(ui, rect, &tab.shader_effect.clone()),
+        "crt"  => {
+            let visible_cells = tab.terminal.vt.visible_cells().to_vec();
+            let scrollback_lines = tab.terminal.vt.scrollback.all_lines_as_strings();
+            let cursor_row = tab.terminal.vt.cursor_row;
+            let cursor_col = tab.terminal.vt.cursor_col;
+            let effect = tab.shader_effect.clone();
+            crate::crt_postprocess::draw_crt_postprocess(
+                ui,
+                rect,
+                &effect,
+                &visible_cells,
+                &scrollback_lines,
+                cursor_row,
+                cursor_col,
+                default_fg,
+                bg_color,
+                font_size,
+                bg_texture,
+                &mut tab.crt_state,
+                &tab.padding,
+            );
+        }
         "fire" => draw_fire_base_overlay(ui, rect, &tab.shader_effect.clone(), allow_repaint),
         _ => {
             // Unknown plugin — placeholder tint
@@ -496,37 +546,6 @@ fn apply_shader_overlay(ui: &mut egui::Ui, rect: egui::Rect, tab: &mut TabState,
     }
 }
 
-// ── CRT overlay ───────────────────────────────────────────────────────────────
-
-fn draw_crt_overlay(ui: &mut egui::Ui, rect: egui::Rect, effect: &ridgeback_config::ShaderEffectConfig) {
-    let scanline_intensity = effect.param_f32("scanline_intensity", 0.3);
-    let curvature          = effect.param_f32("curvature", 0.1);
-    let bloom_strength     = effect.param_f32("bloom_strength", 0.15);
-    let painter = ui.painter_at(rect);
-
-    let scanline_alpha = (scanline_intensity * 80.0) as u8;
-    let mut y = rect.top();
-    while y < rect.bottom() {
-        painter.line_segment(
-            [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-            egui::Stroke::new(1.0, egui::Color32::from_black_alpha(scanline_alpha)),
-        );
-        y += 3.0;
-    }
-    let va = (curvature * 160.0) as u8;
-    // Four vignette edges
-    for r in [
-        egui::Rect::from_min_size(rect.min, egui::vec2(rect.width() * 0.04, rect.height())),
-        egui::Rect::from_min_size(egui::pos2(rect.right() - rect.width() * 0.04, rect.top()), egui::vec2(rect.width() * 0.04, rect.height())),
-        egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), rect.height() * 0.03)),
-        egui::Rect::from_min_size(egui::pos2(rect.left(), rect.bottom() - rect.height() * 0.03), egui::vec2(rect.width(), rect.height() * 0.03)),
-    ] {
-        painter.rect_filled(r, 0.0, egui::Color32::from_black_alpha(va));
-    }
-    let bloom_alpha = (bloom_strength * 18.0) as u8;
-    painter.rect_filled(rect, 0.0, egui::Color32::from_rgba_unmultiplied(0, 255, 80, bloom_alpha));
-    painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(15));
-}
 
 // ── Fire base flame overlay (bottom edge cellular automaton) ──────────────────
 

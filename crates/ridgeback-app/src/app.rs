@@ -42,6 +42,12 @@ pub struct RidgebackApp {
     pub focused_profile_key: Option<String>,
     /// Profile key of the most recently opened tab (used as default for new-tab actions).
     pub last_opened_profile: Option<String>,
+    /// FPS counter state: frame timestamps for the last second.
+    fps_frames: Vec<std::time::Instant>,
+    /// Last computed FPS value for display.
+    fps_display: f32,
+    /// Last time a shader repaint was allowed (for throttling).
+    last_shader_repaint: std::time::Instant,
 }
 impl RidgebackApp {
     pub fn new(config: Config) -> Self {
@@ -90,6 +96,9 @@ impl RidgebackApp {
             tab_drag: TabDragState::default(),
             focused_profile_key: None,
             last_opened_profile: initial_profile_key,
+            fps_frames: Vec::new(),
+            fps_display: 0.0,
+            last_shader_repaint: std::time::Instant::now(),
         }
     }
 
@@ -359,11 +368,33 @@ impl RidgebackApp {
 
 impl eframe::App for RidgebackApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // ── FPS tracking ──────────────────────────────────────────────────
+        let now = std::time::Instant::now();
+        self.fps_frames.push(now);
+        // Keep only frames from the last second
+        let one_sec_ago = now - std::time::Duration::from_secs(1);
+        self.fps_frames.retain(|&t| t >= one_sec_ago);
+        self.fps_display = self.fps_frames.len() as f32;
+
         if self.bg_texture.is_none() { self.bg_texture = load_background_texture(ctx); }
         let window_focused = ctx.input(|i| i.focused);
         let update_in_bg   = self.config.rendering.update_in_background;
         let dt = ctx.input(|i| i.unstable_dt).min(0.1);
         let still_animating = self.tabs.tick_animations(dt);
+
+        // ── Shader FPS throttle ───────────────────────────────────────────
+        // Determine effective max FPS: 1 FPS when in background and
+        // update_in_background is off, otherwise the configured max.
+        let effective_max_fps = if !window_focused && !update_in_bg {
+            1u32
+        } else {
+            self.config.rendering.effective_shader_fps()
+        };
+        let shader_interval = std::time::Duration::from_secs_f64(1.0 / effective_max_fps as f64);
+        let allow_shader_repaint = now.duration_since(self.last_shader_repaint) >= shader_interval;
+        if allow_shader_repaint {
+            self.last_shader_repaint = now;
+        }
 
         // Clean up groups that became empty after close animations finished
         self.cleanup_empty_groups();
@@ -416,6 +447,7 @@ impl eframe::App for RidgebackApp {
                         tab.text_shadow_enabled = profile.text_shadow_enabled;
                         tab.text_shadow_alpha = profile.text_shadow_alpha;
                         tab.text_foreground = profile.text_foreground.clone();
+                        tab.padding = profile.padding.clone();
                     }
                     let msg = if updated {
                         format!("\"{}\" — settings applied to open tabs.", profile.name)
@@ -433,7 +465,7 @@ impl eframe::App for RidgebackApp {
             .show(ctx, |ui| {
                 if self.tabs.any_active() {
                     let bg_tex = self.bg_texture.clone();
-                    let allow_repaint = window_focused || update_in_bg;
+                    let allow_repaint = allow_shader_repaint;
                     let available = ui.available_rect_before_wrap();
 
                     // Pre-compute profile names list for tab bar + buttons
@@ -631,13 +663,47 @@ impl eframe::App for RidgebackApp {
             });
 
         self.toasts.show(ctx);
-        if any_changed { ctx.request_repaint(); }
-        if still_animating { ctx.request_repaint(); }
-        let has_shader = self.tabs.all_tabs_ref().any(|t| t.shader_effect.plugin_id != "none");
-        if has_shader && (window_focused || update_in_bg) {
-            ctx.request_repaint_after(self.config.rendering.shader_frame_interval());
-        } else if self.tabs.any_active() && (window_focused || update_in_bg) {
-            ctx.request_repaint_after(std::time::Duration::from_millis(33));
+
+        // ── Repaint scheduling with FPS limiting ──────────────────────────
+        // ALL repaints go through request_repaint_after to enforce the max FPS cap.
+        // Using request_repaint() (immediate) would bypass the limit.
+        let needs_repaint = any_changed || still_animating
+            || self.tabs.all_tabs_ref().any(|t| t.shader_effect.plugin_id != "none")
+            || self.tabs.any_active();
+
+        if needs_repaint {
+            if !window_focused && !update_in_bg {
+                // Background with update_in_background off: 1 FPS
+                ctx.request_repaint_after(std::time::Duration::from_secs(1));
+            } else {
+                // Enforce the configured max FPS for everything
+                ctx.request_repaint_after(shader_interval);
+            }
+        }
+
+        // ── FPS overlay ───────────────────────────────────────────────────
+        if self.config.rendering.show_fps_overlay {
+            let screen = ctx.screen_rect();
+            let fps_text = format!("{:.0} FPS", self.fps_display);
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("fps_overlay"),
+            ));
+            let font_id = egui::FontId::monospace(11.0);
+            let galley = ctx.fonts(|f| f.layout_no_wrap(fps_text.clone(), font_id.clone(), egui::Color32::WHITE));
+            let text_size = galley.size();
+            let pill_rect = egui::Rect::from_min_size(
+                egui::pos2(screen.right() - text_size.x - 20.0, screen.bottom() - text_size.y - 12.0),
+                egui::vec2(text_size.x + 12.0, text_size.y + 4.0),
+            );
+            painter.rect_filled(pill_rect, 4.0, egui::Color32::from_black_alpha(180));
+            painter.text(
+                pill_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                &fps_text,
+                font_id,
+                egui::Color32::from_rgb(0x80, 0xff, 0x80),
+            );
         }
     }
 }

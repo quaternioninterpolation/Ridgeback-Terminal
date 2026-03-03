@@ -10,6 +10,8 @@ pub struct RenderingConfig {
     pub max_shader_fps: u32,
     /// Automatically reduce effects and FPS when on battery power.
     pub battery_aware: bool,
+    /// Show an FPS counter overlay in the top-right corner.
+    pub show_fps_overlay: bool,
 }
 
 impl Default for RenderingConfig {
@@ -18,6 +20,7 @@ impl Default for RenderingConfig {
             update_in_background: true,
             max_shader_fps: 144,
             battery_aware: true,
+            show_fps_overlay: false,
         }
     }
 }

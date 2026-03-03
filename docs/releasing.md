@@ -49,7 +49,26 @@ minor = 2
 patch = 0
 ```
 
-### 3. Run the version sync script
+### 3. Update `CHANGELOG.md`
+
+Move all entries from the `[Unreleased]` section into a new version heading:
+
+```markdown
+## [0.2.0] — 2026-04-01
+
+### Added
+- ...  (move items from [Unreleased] here)
+```
+
+Add a fresh empty `## [Unreleased]` section at the top, and update the
+comparison links at the bottom of the file:
+
+```markdown
+[Unreleased]: https://github.com/quaternioninterpolation/Ridgeback-Terminal/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/quaternioninterpolation/Ridgeback-Terminal/compare/v0.1.3...v0.2.0
+```
+
+### 4. Run the version sync script
 
 ```bash
 ./scripts/sync-version.sh
@@ -59,7 +78,7 @@ This updates:
 - `Cargo.toml` `[workspace.package].version`
 - `Cargo.lock`
 
-### 4. Verify everything looks right
+### 5. Verify everything looks right
 
 ```bash
 # Check the runtime version the binary will report:
@@ -72,7 +91,7 @@ cargo run -p ridgeback-app -- --version 2>/dev/null || true
 grep 'version' Cargo.toml | head -3
 ```
 
-### 5. Commit and tag
+### 6. Commit and tag
 
 ```bash
 VERSION="0.2.0"   # ← match what you set above
@@ -82,7 +101,7 @@ git commit -m "Bump version to ${VERSION}"
 git tag "v${VERSION}"
 ```
 
-### 6. Push a release branch
+### 7. Push a release branch
 
 Ridgeback's CI is triggered by pushes to `releases/**` branches:
 
@@ -104,7 +123,7 @@ git push origin "releases/v${VERSION}"
 > 3. Bundle the macOS `.app` (via `scripts/bundle-macos.sh`)
 > 4. Create a GitHub Release tagged `v<VERSION>` with the built artifacts
 
-### 7. Write release notes
+### 8. Write release notes
 
 After CI finishes, go to the
 [Releases page](../../releases) on GitHub and edit the draft release:
@@ -121,7 +140,9 @@ Then click **Publish release**.
 
 ```bash
 # Full release flow (copy-paste friendly):
-# 1. Edit build_constants.toml with the new version, then:
+# 1. Edit build_constants.toml with the new version
+# 2. Move CHANGELOG.md [Unreleased] entries under a new version heading
+# 3. Then:
 
 ./scripts/sync-version.sh
 

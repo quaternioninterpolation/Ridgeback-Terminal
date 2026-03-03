@@ -20,6 +20,9 @@ tracing-subscriber = { workspace = true }
 tokio = { workspace = true }
 eframe = "0.29"
 egui = "0.29"
+egui-wgpu = "0.29"
+wgpu = "23"
+fontdue = "0.9"
 rfd = "0.15"
 arboard = "3"
 image = { version = "0.25", default-features = false, features = ["png"] }

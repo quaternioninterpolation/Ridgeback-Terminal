@@ -106,7 +106,7 @@ All shortcuts are re-bindable in `config.toml`.
 - [Plugin System](docs/plugins.md)
 - [Casting & Screen Sharing](docs/casting.md)
 - [Architecture & Tech Stack](docs/architecture.md)
-
+- [Releasing](docs/releasing.md)
 ---
 
 ## Contributing

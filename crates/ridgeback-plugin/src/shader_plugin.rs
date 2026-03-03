@@ -184,10 +184,10 @@ impl BuiltinCrtShaderPlugin {
     pub fn new(shaders_dir: &std::path::Path) -> Self {
         let wgsl_path = shaders_dir.join("crt.wgsl");
         let schema = vec![
-            ParamDescriptor::float("scanline_intensity", "Scanline Intensity", 0.0, 1.0, 0.3),
+            ParamDescriptor::float("scanline_intensity", "Scanline Intensity", 0.0, 1.0, 1.0),
             ParamDescriptor::float("curvature", "Curvature", 0.0, 0.5, 0.1),
-            ParamDescriptor::float("bloom_strength", "Bloom Strength", 0.0, 1.0, 0.15),
-            ParamDescriptor::float("chromatic_aberration", "Chromatic Aberration", 0.0, 0.02, 0.003),
+            ParamDescriptor::float("bloom_strength", "Bloom Strength", 0.0, 1.0, 0.20),
+            ParamDescriptor::float("chromatic_aberration", "Chromatic Aberration", 0.0, 0.02, 0.013),
         ];
         Self { wgsl_path, schema }
     }

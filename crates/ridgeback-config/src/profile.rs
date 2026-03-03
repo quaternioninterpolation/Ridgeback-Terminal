@@ -285,6 +285,25 @@ impl Default for ShaderParams {
     }
 }
 
+// ── Terminal padding ────────────────────────────────────────────────────────
+
+/// Terminal viewport padding as a percentage of screen width/height.
+/// Each value is 0.0–25.0 representing a percentage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TerminalPadding {
+    pub top: f32,
+    pub bottom: f32,
+    pub left: f32,
+    pub right: f32,
+}
+
+impl Default for TerminalPadding {
+    fn default() -> Self {
+        Self { top: 2.5, bottom: 2.5, left: 2.5, right: 2.5 }
+    }
+}
+
 // ── Profile ─────────────────────────────────────────────────────────────────
 
 /// A terminal profile defining shell, appearance, and shader settings.
@@ -311,6 +330,8 @@ pub struct Profile {
     pub text_shadow_enabled: bool,
     /// Shadow darkness: 0.0 = invisible, 1.0 = fully black.
     pub text_shadow_alpha: f32,
+    /// Terminal viewport padding (percentage of width/height).
+    pub padding: TerminalPadding,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -401,6 +422,7 @@ impl Profile {
             text_foreground: "#CDD6F4".to_string(),
             text_shadow_enabled: true,
             text_shadow_alpha: 0.65,
+            padding: TerminalPadding::default(),
         }
     }
 
@@ -421,6 +443,7 @@ impl Profile {
             text_foreground: "#CCCCCC".to_string(),
             text_shadow_enabled: true,
             text_shadow_alpha: 0.65,
+            padding: TerminalPadding::default(),
         }
     }
 
@@ -441,6 +464,7 @@ impl Profile {
             text_foreground: "#CDD6F4".to_string(),
             text_shadow_enabled: true,
             text_shadow_alpha: 0.65,
+            padding: TerminalPadding::default(),
         }
     }
 
@@ -461,6 +485,7 @@ impl Profile {
             text_foreground: "#CDD6F4".to_string(),
             text_shadow_enabled: true,
             text_shadow_alpha: 0.65,
+            padding: TerminalPadding::default(),
         }
     }
 
@@ -481,6 +506,7 @@ impl Profile {
             text_foreground: "#CDD6F4".to_string(),
             text_shadow_enabled: true,
             text_shadow_alpha: 0.65,
+            padding: TerminalPadding::default(),
         }
     }
 
@@ -501,6 +527,7 @@ impl Profile {
             text_foreground: "#CDD6F4".to_string(),
             text_shadow_enabled: true,
             text_shadow_alpha: 0.65,
+            padding: TerminalPadding::default(),
         }
     }
 
@@ -521,6 +548,7 @@ impl Profile {
             text_foreground: "#CDD6F4".to_string(),
             text_shadow_enabled: true,
             text_shadow_alpha: 0.65,
+            padding: TerminalPadding::default(),
         }
     }
 }

@@ -12,12 +12,23 @@ const MOD: &str = "Cmd";
 #[cfg(not(target_os = "macos"))]
 const MOD: &str = "Ctrl";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaddingMode {
+    Uniform,
+    WidthHeight,
+    Individual,
+}
+
 /// Settings window state.
 pub struct SettingsWindow {
     active_tab: SettingsTab,
     edited_config: Config,
     /// The profile key currently selected in the left list.
     pub selected_profile: Option<String>,
+    /// Profile key pending delete confirmation (shown in a modal dialog).
+    pending_delete: Option<String>,
+    /// Current padding edit mode per profile.
+    padding_mode: PaddingMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +48,8 @@ impl SettingsWindow {
             active_tab: SettingsTab::Profiles,
             edited_config: config,
             selected_profile: first,
+            pending_delete: None,
+            padding_mode: PaddingMode::Uniform,
         }
     }
 
@@ -158,6 +171,55 @@ impl SettingsWindow {
                     if resp.clicked() {
                         self.selected_profile = Some(key.clone());
                     }
+
+                    // Right-click context menu
+                    resp.context_menu(|ui| {
+                        if ui.button("📋 Duplicate").clicked() {
+                            if let Some(profile) = self.edited_config.profiles.get(key) {
+                                let mut new_profile = profile.clone();
+                                let base_name = profile.name.clone();
+
+                                // Count existing profiles whose names match
+                                // "Name", "Name (1)", "Name (2)", etc.
+                                let mut count = 1u32;
+                                loop {
+                                    let candidate = format!("{} ({})", base_name, count);
+                                    let exists = self.edited_config.profiles.values()
+                                        .any(|p| p.name == candidate);
+                                    if !exists { break; }
+                                    count += 1;
+                                }
+                                new_profile.name = format!("{} ({})", base_name, count);
+
+                                // Generate a unique map key
+                                let new_key = {
+                                    let mut k = format!("{}_{}", key, count);
+                                    while self.edited_config.profiles.contains_key(&k) {
+                                        count += 1;
+                                        k = format!("{}_{}", key, count);
+                                    }
+                                    k
+                                };
+
+                                self.edited_config.profiles.insert(new_key.clone(), new_profile);
+                                self.selected_profile = Some(new_key);
+                            }
+                            ui.close_menu();
+                        }
+
+                        let can_delete = self.edited_config.profiles.len() > 1;
+                        if ui.add_enabled(can_delete, egui::Button::new("🗑 Remove")).clicked() {
+                            self.pending_delete = Some(key.clone());
+                            ui.close_menu();
+                        }
+                        if !can_delete {
+                            ui.label(
+                                egui::RichText::new("Cannot remove the last profile")
+                                    .color(egui::Color32::from_gray(120))
+                                    .size(10.0)
+                            );
+                        }
+                    });
                 }
 
                 ui.add_space(8.0);
@@ -244,6 +306,11 @@ impl SettingsWindow {
                                 ui.add_space(12.0);
                                 ui.separator();
 
+                                // ── Terminal Padding section ──────────────
+                                ui.collapsing("📐 Terminal Padding", |ui| {
+                                    show_padding_section(ui, &mut profile.padding, &mut self.padding_mode);
+                                });
+
                                 // ── Shader Effect section ─────────────────
                                 ui.collapsing("🎨 Shader Effect", |ui| {
                                     show_shader_effect_section(ui, &mut profile.shader_effect, key, shader_host);
@@ -263,6 +330,61 @@ impl SettingsWindow {
                     });
             });
         });
+
+        // ── Delete confirmation dialog ───────────────────────────────────
+        if let Some(delete_key) = self.pending_delete.clone() {
+            let profile_name = self.edited_config.profiles
+                .get(&delete_key)
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| delete_key.clone());
+
+            let mut open = true;
+            egui::Window::new("Delete Profile?")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .open(&mut open)
+                .show(ui.ctx(), |ui| {
+                    ui.add_space(4.0);
+                    ui.label(format!(
+                        "Are you sure you want to remove the profile \"{}\"?",
+                        profile_name
+                    ));
+                    ui.label(
+                        egui::RichText::new("This action cannot be undone.")
+                            .color(egui::Color32::from_rgb(255, 160, 100))
+                            .size(11.0),
+                    );
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Cancel").clicked() {
+                            self.pending_delete = None;
+                        }
+                        ui.add_space(8.0);
+                        if ui.button(
+                            egui::RichText::new("🗑 Delete")
+                                .color(egui::Color32::from_rgb(255, 100, 100)),
+                        ).clicked() {
+                            self.edited_config.profiles.remove(&delete_key);
+                            // If the deleted profile was selected, select another
+                            if self.selected_profile.as_deref() == Some(delete_key.as_str()) {
+                                self.selected_profile = self.edited_config.profiles.keys().next().cloned();
+                            }
+                            // If the default profile was deleted, update it
+                            if self.edited_config.general.default_profile == delete_key {
+                                self.edited_config.general.default_profile =
+                                    self.edited_config.profiles.keys().next().cloned()
+                                        .unwrap_or_default();
+                            }
+                            self.pending_delete = None;
+                        }
+                    });
+                });
+            // If the user closed the dialog via the X button
+            if !open {
+                self.pending_delete = None;
+            }
+        }
     }
 
     // ── Shortcuts tab ─────────────────────────────────────────────────────────
@@ -309,7 +431,7 @@ impl SettingsWindow {
         let rendering = &mut self.edited_config.rendering;
 
         ui.checkbox(&mut rendering.update_in_background, "Update terminals in background");
-        ui.label("Continue rendering when the window is not focused.");
+        ui.label("Continue rendering at full speed when the window is not focused. When off, limits to 1 FPS.");
         ui.add_space(8.0);
 
         ui.horizontal(|ui| {
@@ -320,6 +442,10 @@ impl SettingsWindow {
 
         ui.checkbox(&mut rendering.battery_aware, "Battery-aware mode");
         ui.label("Reduces shader effects and frame rate when on battery power.");
+        ui.add_space(8.0);
+
+        ui.checkbox(&mut rendering.show_fps_overlay, "Show FPS counter");
+        ui.label("Display a frames-per-second counter in the top-right corner.");
     }
 
     // ── AI tab ────────────────────────────────────────────────────────────────
@@ -680,6 +806,96 @@ fn show_local_ai_section(
         ui.label("Context length:");
         ui.add(egui::Slider::new(&mut local.context_length, 256..=8192).text("tokens"));
     });
+}
+
+// ── Terminal padding section ──────────────────────────────────────────────────
+
+fn show_padding_section(
+    ui: &mut egui::Ui,
+    padding: &mut ridgeback_config::TerminalPadding,
+    mode: &mut PaddingMode,
+) {
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.label("Mode:");
+        ui.selectable_value(mode, PaddingMode::Uniform, "Uniform");
+        ui.selectable_value(mode, PaddingMode::WidthHeight, "W × H");
+        ui.selectable_value(mode, PaddingMode::Individual, "Individual");
+    });
+    ui.add_space(4.0);
+
+    let fmt = |v: f64, _| format!("{:.1}%", v);
+
+    match *mode {
+        PaddingMode::Uniform => {
+            let mut val = padding.top;
+            ui.horizontal(|ui| {
+                ui.label("All sides:");
+                if ui.add(
+                    egui::Slider::new(&mut val, 0.0..=25.0)
+                        .custom_formatter(fmt)
+                        .suffix("%")
+                ).changed() {
+                    padding.top = val;
+                    padding.bottom = val;
+                    padding.left = val;
+                    padding.right = val;
+                }
+            });
+        }
+        PaddingMode::WidthHeight => {
+            let mut horiz = padding.left;
+            let mut vert = padding.top;
+            ui.horizontal(|ui| {
+                ui.label("Horizontal:");
+                if ui.add(
+                    egui::Slider::new(&mut horiz, 0.0..=25.0)
+                        .custom_formatter(fmt)
+                        .suffix("%")
+                ).changed() {
+                    padding.left = horiz;
+                    padding.right = horiz;
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Vertical:");
+                if ui.add(
+                    egui::Slider::new(&mut vert, 0.0..=25.0)
+                        .custom_formatter(fmt)
+                        .suffix("%")
+                ).changed() {
+                    padding.top = vert;
+                    padding.bottom = vert;
+                }
+            });
+        }
+        PaddingMode::Individual => {
+            egui::Grid::new("padding_individual")
+                .num_columns(2)
+                .spacing([10.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label("Top:");
+                    ui.add(egui::Slider::new(&mut padding.top, 0.0..=25.0)
+                        .custom_formatter(fmt).suffix("%"));
+                    ui.end_row();
+
+                    ui.label("Bottom:");
+                    ui.add(egui::Slider::new(&mut padding.bottom, 0.0..=25.0)
+                        .custom_formatter(fmt).suffix("%"));
+                    ui.end_row();
+
+                    ui.label("Left:");
+                    ui.add(egui::Slider::new(&mut padding.left, 0.0..=25.0)
+                        .custom_formatter(fmt).suffix("%"));
+                    ui.end_row();
+
+                    ui.label("Right:");
+                    ui.add(egui::Slider::new(&mut padding.right, 0.0..=25.0)
+                        .custom_formatter(fmt).suffix("%"));
+                    ui.end_row();
+                });
+        }
+    }
 }
 
 // ── Shader effect section ─────────────────────────────────────────────────────

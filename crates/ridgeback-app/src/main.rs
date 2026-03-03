@@ -11,6 +11,7 @@ mod tab_drag;
 mod split_pane;
 mod group_tab_bar;
 mod particle_emit;
+mod crt_postprocess;
 
 use anyhow::Result;
 

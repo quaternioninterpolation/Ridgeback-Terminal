@@ -28,6 +28,7 @@ It targets **Windows, macOS, and Linux** with feature parity across all three.
 d:\Dev\RustTerm\
 ├── Cargo.toml              # Workspace manifest (resolver = "2")
 ├── AGENT.MD                # ← THIS FILE — update on every change
+├── CHANGELOG.md            # Keep-a-Changelog format — update on every change
 ├── README.md               # Public-facing readme
 ├── LICENSE                  # MIT
 ├── docs/
@@ -471,7 +472,9 @@ RUST_LOG=debug cargo run -p ridgeback-app
 
 ## Update Instructions for Future AI Agents
 
-**When you make ANY changes to this project, you MUST update this file:**
+**When you make ANY changes to this project, you MUST update BOTH this file AND `CHANGELOG.md`:**
+
+### AGENT.MD updates
 
 1. If you **add a new module/file**: Add it to the appropriate crate table in the "Crate-by-Crate Architecture" section.
 2. If you **complete a pending task**: Move it from "Pending / In-Progress Work" to a "Completed" section (or remove it and note what was done).
@@ -480,4 +483,10 @@ RUST_LOG=debug cargo run -p ridgeback-app
 5. If you **add new shortcuts/keybindings**: Update the "Key Shortcuts" table.
 6. If you **change platform behavior**: Update the "Cross-Platform Implementation Details" section.
 
-**Keep this file accurate. It is the handoff document between sessions.**
+### CHANGELOG.md updates
+
+7. **Every user-visible change** (feature, fix, removal, deprecation) must be added to the `[Unreleased]` section of `CHANGELOG.md` under the appropriate heading (`Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, `Security`).
+8. When a **new version is released**, the `[Unreleased]` entries are moved under a new version heading (e.g. `## [0.2.0] — 2026-04-01`) and a fresh `[Unreleased]` section is added at the top. This is part of the release checklist in `docs/releasing.md`.
+9. Follow the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
+
+**Keep both files accurate. They are the handoff documents between sessions.**

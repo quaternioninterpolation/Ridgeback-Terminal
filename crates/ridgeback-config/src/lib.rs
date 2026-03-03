@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub use profile::{ColorScheme, CursorStyle, Profile, ShaderEffect, ShaderParams, ShellType,
-                   ShaderEffectConfig, TypingParticlesConfig};
+                   ShaderEffectConfig, TypingParticlesConfig, TerminalPadding};
 pub use keybindings::KeyBindings;
 pub use rendering::RenderingConfig;
 pub use ai::AiConfig;

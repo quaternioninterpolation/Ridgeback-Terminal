@@ -180,6 +180,10 @@ pub struct TabState {
     pub text_shadow_alpha: f32,
     /// Default text foreground colour ("#RRGGBB").
     pub text_foreground: String,
+    /// Per-tab CRT rasterization state (texture cache).
+    pub crt_state: crate::crt_postprocess::CrtRasterState,
+    /// Terminal viewport padding (percentage of width/height).
+    pub padding: ridgeback_config::TerminalPadding,
 }
 
 // ── Tab Group ─────────────────────────────────────────────────────────────────
@@ -233,6 +237,8 @@ impl TabGroup {
             text_shadow_enabled: profile.text_shadow_enabled,
             text_shadow_alpha: profile.text_shadow_alpha,
             text_foreground: profile.text_foreground.clone(),
+            crt_state: crate::crt_postprocess::CrtRasterState::new(),
+            padding: profile.padding.clone(),
         };
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
