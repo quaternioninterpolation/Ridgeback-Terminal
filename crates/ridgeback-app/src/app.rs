@@ -368,6 +368,15 @@ impl RidgebackApp {
 
 impl eframe::App for RidgebackApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // ── Disable macOS IME ─────────────────────────────────────────────
+        // When running as a .app bundle, macOS activates the full Input
+        // Method framework which can inject spurious text events (e.g. a
+        // space) alongside non-printable keys like Backspace. Since this
+        // is a terminal emulator that handles raw key events directly, we
+        // disable IME and set the purpose to Terminal.
+        ctx.send_viewport_cmd(egui::ViewportCommand::IMEAllowed(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::IMEPurpose(egui::viewport::IMEPurpose::Terminal));
+
         // ── FPS tracking ──────────────────────────────────────────────────
         let now = std::time::Instant::now();
         self.fps_frames.push(now);

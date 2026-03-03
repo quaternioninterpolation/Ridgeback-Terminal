@@ -44,9 +44,49 @@ impl PtySession {
             .openpty(pty_size)
             .context("Failed to open PTY")?;
 
+        // Fix termios on the PTY master. When launched as a macOS .app
+        // bundle there is no inherited controlling terminal, so openpty()
+        // may produce default termios with wrong control-character
+        // settings (e.g. VERASE != DEL). Explicitly set the values that
+        // matter so backspace, Ctrl-C, etc. work correctly.
+        #[cfg(unix)]
+        {
+            if let Some(fd) = pair.master.as_raw_fd() {
+                unsafe {
+                    let mut termios: libc::termios = std::mem::zeroed();
+                    if libc::tcgetattr(fd, &mut termios) == 0 {
+                        termios.c_cc[libc::VERASE] = 0x7f; // DEL for backspace
+                        termios.c_cc[libc::VKILL]  = 0x15; // Ctrl-U
+                        termios.c_cc[libc::VINTR]  = 0x03; // Ctrl-C
+                        termios.c_cc[libc::VEOF]   = 0x04; // Ctrl-D
+                        termios.c_cc[libc::VSUSP]  = 0x1a; // Ctrl-Z
+                        termios.c_cc[libc::VWERASE] = 0x17; // Ctrl-W
+                        // Enable common input/output processing flags
+                        termios.c_iflag |= libc::ICRNL;
+                        termios.c_oflag |= libc::OPOST | libc::ONLCR;
+                        termios.c_lflag |= libc::ECHO | libc::ECHOE | libc::ECHOK
+                            | libc::ICANON | libc::ISIG | libc::IEXTEN;
+                        let _ = libc::tcsetattr(fd, libc::TCSANOW, &termios);
+                    }
+                }
+            }
+        }
+
         let mut cmd = CommandBuilder::new(&profile.shell);
         for arg in &profile.args {
             cmd.arg(arg);
+        }
+
+        // Ensure TERM is set. When launched as a macOS .app bundle the
+        // process inherits launchd's minimal environment which typically
+        // has no TERM at all. Without it the shell / readline / zle may
+        // misinterpret control characters (e.g. DEL 0x7f for backspace)
+        // and produce visible artifacts like spaces or tabs instead.
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("COLORTERM", "truecolor");
+        // Ensure LANG is set so the shell uses UTF-8.
+        if std::env::var("LANG").is_err() {
+            cmd.env("LANG", "en_US.UTF-8");
         }
 
         // Set working directory

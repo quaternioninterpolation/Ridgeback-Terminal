@@ -247,78 +247,51 @@ pub fn show_terminal(
                         let mut ctrl_chars_sent: Vec<u8> = Vec::new();
                         let mut paste_handled = false;
 
+                        // ── Pass 1: handle Event::Key and non-text events ──
+                        // Track whether a non-printable key (Backspace, Delete,
+                        // Enter, Tab, Escape, arrows, etc.) was pressed this
+                        // frame so we can suppress any spurious Event::Text
+                        // that the platform might emit alongside it.
+                        let mut handled_non_printable = false;
+
                         for ev in &events {
                             match ev {
-                                egui::Event::Text(t) => {
-                                    for ch in t.chars() {
-                                        if ch.is_control() {
-                                            // Forward Ctrl+letter control chars (e.g. \x03 for Ctrl+C)
-                                            // directly to the PTY — some backends deliver them here
-                                            // instead of (or in addition to) Event::Key.
-                                            let byte = ch as u8;
-                                            // Don't forward \r (Enter), \t (Tab), \x1b (Escape),
-                                            // \x7f (Backspace/DEL) — these are handled explicitly
-                                            // in the Event::Key arm below.
-                                            if byte == 0x0d || byte == 0x09 || byte == 0x1b || byte == 0x7f || byte == 0x08 {
-                                                continue;
-                                            }
-                                            ctrl_chars_sent.push(byte);
-                                            let _ = tab.terminal.write_to_pty(&[byte]);
-                                            // If this was Ctrl+C (\x03), also clear selection
-                                            if byte == 0x03 {
-                                                tab.terminal_selection = None;
-                                            }
-                                            continue;
-                                        }
-                                        let mut buf = [0u8; 4];
-                                        let s = ch.encode_utf8(&mut buf);
-                                        let _ = tab.terminal.write_to_pty(s.as_bytes());
-                                        // Emit particles via the active particle plugin
-                                        let spawned = crate::particle_emit::emit_for_tab(
-                                            cursor_screen_x, cursor_screen_y, tab,
-                                        );
-                                        tab.particles.spawn(spawned);
-                                    }
-                                }
                                 egui::Event::Key { key, pressed: true, modifiers, .. } => {
                                     match key {
                                         egui::Key::Enter      => {
                                             let _ = tab.terminal.write_to_pty(b"\r");
-                                            // Emit newline particles
                                             let spawned = crate::particle_emit::emit_newline_for_tab(
                                                 cursor_screen_x, cursor_screen_y, tab,
                                             );
                                             tab.particles.spawn(spawned);
+                                            handled_non_printable = true;
                                         }
                                         // Backspace: Ctrl+Backspace = delete word, plain = delete char
                                         egui::Key::Backspace if modifiers.ctrl || modifiers.alt => {
-                                            // Ctrl+W (0x17) is the standard "erase word" in terminals
                                             if !ctrl_chars_sent.contains(&0x17) {
                                                 let _ = tab.terminal.write_to_pty(b"\x17");
                                             }
+                                            handled_non_printable = true;
                                         }
                                         egui::Key::Backspace  => {
-                                            // Send DEL (0x7f) — correct single-char backspace for PTY shells
                                             let _ = tab.terminal.write_to_pty(b"\x7f");
+                                            handled_non_printable = true;
                                         }
-                                        egui::Key::Delete     => { let _ = tab.terminal.write_to_pty(b"\x1b[3~"); }
-                                        egui::Key::ArrowUp    => { let _ = tab.terminal.write_to_pty(b"\x1b[A"); }
-                                        egui::Key::ArrowDown  => { let _ = tab.terminal.write_to_pty(b"\x1b[B"); }
-                                        egui::Key::ArrowRight => { let _ = tab.terminal.write_to_pty(b"\x1b[C"); }
-                                        egui::Key::ArrowLeft  => { let _ = tab.terminal.write_to_pty(b"\x1b[D"); }
-                                        egui::Key::Home       => { let _ = tab.terminal.write_to_pty(b"\x1b[H"); }
-                                        egui::Key::End        => { let _ = tab.terminal.write_to_pty(b"\x1b[F"); }
-                                        egui::Key::PageUp     => { let _ = tab.terminal.write_to_pty(b"\x1b[5~"); }
-                                        egui::Key::PageDown   => { let _ = tab.terminal.write_to_pty(b"\x1b[6~"); }
-                                        egui::Key::Escape     => { let _ = tab.terminal.write_to_pty(b"\x1b"); }
-                                        egui::Key::Tab if !modifiers.shift => { let _ = tab.terminal.write_to_pty(b"\t"); }
-                                        egui::Key::Tab        => { let _ = tab.terminal.write_to_pty(b"\x1b[Z"); }
+                                        egui::Key::Delete     => { let _ = tab.terminal.write_to_pty(b"\x1b[3~"); handled_non_printable = true; }
+                                        egui::Key::ArrowUp    => { let _ = tab.terminal.write_to_pty(b"\x1b[A"); handled_non_printable = true; }
+                                        egui::Key::ArrowDown  => { let _ = tab.terminal.write_to_pty(b"\x1b[B"); handled_non_printable = true; }
+                                        egui::Key::ArrowRight => { let _ = tab.terminal.write_to_pty(b"\x1b[C"); handled_non_printable = true; }
+                                        egui::Key::ArrowLeft  => { let _ = tab.terminal.write_to_pty(b"\x1b[D"); handled_non_printable = true; }
+                                        egui::Key::Home       => { let _ = tab.terminal.write_to_pty(b"\x1b[H"); handled_non_printable = true; }
+                                        egui::Key::End        => { let _ = tab.terminal.write_to_pty(b"\x1b[F"); handled_non_printable = true; }
+                                        egui::Key::PageUp     => { let _ = tab.terminal.write_to_pty(b"\x1b[5~"); handled_non_printable = true; }
+                                        egui::Key::PageDown   => { let _ = tab.terminal.write_to_pty(b"\x1b[6~"); handled_non_printable = true; }
+                                        egui::Key::Escape     => { let _ = tab.terminal.write_to_pty(b"\x1b"); handled_non_printable = true; }
+                                        egui::Key::Tab if !modifiers.shift => { let _ = tab.terminal.write_to_pty(b"\t"); handled_non_printable = true; }
+                                        egui::Key::Tab        => { let _ = tab.terminal.write_to_pty(b"\x1b[Z"); handled_non_printable = true; }
                                         // Ctrl+C: send SIGINT to PTY (standard terminal behaviour).
                                         // On macOS Cmd+C is used for copy instead.
                                         egui::Key::C if modifiers.ctrl && !modifiers.shift => {
-                                            // On macOS, modifiers.ctrl means the physical Ctrl key (not Cmd),
-                                            // so this is always SIGINT. On other platforms, Ctrl+C is also SIGINT
-                                            // unless Shift is held (Ctrl+Shift+C = copy).
                                             if !ctrl_chars_sent.contains(&0x03) {
                                                 let _ = tab.terminal.write_to_pty(b"\x03");
                                             }
@@ -388,9 +361,6 @@ pub fn show_terminal(
                                 // egui may convert Ctrl+C/X/V into these events instead
                                 // of (or in addition to) Event::Key on some platforms.
                                 egui::Event::Copy => {
-                                    // On macOS, Cmd+C triggers Copy event — always copy.
-                                    // On other platforms, Ctrl+C triggers Copy — only copy if Shift held,
-                                    // otherwise it's SIGINT.
                                     #[cfg(target_os = "macos")]
                                     let should_copy = true;
                                     #[cfg(not(target_os = "macos"))]
@@ -411,7 +381,6 @@ pub fn show_terminal(
                                             if let Some(ref mut cb) = *clipboard { let _ = cb.set_text(lines.join("\n")); }
                                         }
                                     } else {
-                                        // Ctrl+C: send SIGINT to PTY
                                         if !ctrl_chars_sent.contains(&0x03) {
                                             let _ = tab.terminal.write_to_pty(b"\x03");
                                             ctrl_chars_sent.push(0x03);
@@ -420,15 +389,47 @@ pub fn show_terminal(
                                     }
                                 }
                                 egui::Event::Cut => {
-                                    // Ctrl+X → send \x18 to PTY
                                     let _ = tab.terminal.write_to_pty(b"\x18");
                                 }
                                 egui::Event::Paste(text) => {
-                                    // Ctrl+V → paste into PTY
                                     let _ = tab.terminal.write_to_pty(text.as_bytes());
                                     paste_handled = true;
                                 }
                                 _ => {}
+                            }
+                        }
+
+                        // ── Pass 2: handle Event::Text for printable character input ──
+                        // Skip this entirely if a non-printable key was handled above,
+                        // because any accompanying Event::Text is a spurious IME
+                        // artefact (common on macOS with Backspace, Delete, arrows).
+                        if !handled_non_printable {
+                            for ev in &events {
+                                if let egui::Event::Text(t) = ev {
+                                    for ch in t.chars() {
+                                        if ch.is_control() {
+                                            let byte = ch as u8;
+                                            // Skip control chars handled explicitly via Event::Key
+                                            if byte == 0x0d || byte == 0x09 || byte == 0x1b || byte == 0x7f || byte == 0x08 {
+                                                continue;
+                                            }
+                                            ctrl_chars_sent.push(byte);
+                                            let _ = tab.terminal.write_to_pty(&[byte]);
+                                            if byte == 0x03 {
+                                                tab.terminal_selection = None;
+                                            }
+                                            continue;
+                                        }
+                                        let mut buf = [0u8; 4];
+                                        let s = ch.encode_utf8(&mut buf);
+                                        let _ = tab.terminal.write_to_pty(s.as_bytes());
+                                        // Emit particles via the active particle plugin
+                                        let spawned = crate::particle_emit::emit_for_tab(
+                                            cursor_screen_x, cursor_screen_y, tab,
+                                        );
+                                        tab.particles.spawn(spawned);
+                                    }
+                                }
                             }
                         }
                     }

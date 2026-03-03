@@ -304,8 +304,13 @@ impl ShaderPluginHost {
 
     pub fn find_shaders_dir() -> PathBuf {
         let candidates = [
+            // Next to the executable (release / installed)
             std::env::current_exe().ok()
                 .and_then(|p| p.parent().map(|d| d.join("shaders"))),
+            // macOS .app bundle: Contents/Resources/shaders
+            std::env::current_exe().ok()
+                .and_then(|p| p.parent().and_then(|d| d.parent()).map(|d| d.join("Resources").join("shaders"))),
+            // Dev: crates/ridgeback-gpu/shaders relative to working directory
             Some(PathBuf::from("crates/ridgeback-gpu/shaders")),
             Some(PathBuf::from("shaders")),
         ];

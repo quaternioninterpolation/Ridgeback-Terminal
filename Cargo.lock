@@ -4450,7 +4450,7 @@ dependencies = [
 
 [[package]]
 name = "ridgeback-ai"
-version = "0.1.3"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "async-openai",
@@ -4472,7 +4472,7 @@ dependencies = [
 
 [[package]]
 name = "ridgeback-app"
-version = "0.1.3"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4499,7 +4499,7 @@ dependencies = [
 
 [[package]]
 name = "ridgeback-config"
-version = "0.1.3"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "directories",
@@ -4511,10 +4511,11 @@ dependencies = [
 
 [[package]]
 name = "ridgeback-core"
-version = "0.1.3"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "directories",
+ "libc",
  "portable-pty",
  "regex",
  "ridgeback-config",
@@ -4525,7 +4526,7 @@ dependencies = [
 
 [[package]]
 name = "ridgeback-gpu"
-version = "0.1.3"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -4537,7 +4538,7 @@ dependencies = [
 
 [[package]]
 name = "ridgeback-plugin"
-version = "0.1.3"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "directories",

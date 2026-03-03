@@ -103,6 +103,20 @@ chmod +x "$MACOS_DIR/ridgeback"
 # Copy icon
 cp "$ICNS_OUT" "$RESOURCES_DIR/icon.icns"
 
+# Copy bundled plugins (Lua particle/shader definitions)
+if [[ -d "assets/plugins" ]]; then
+    echo "🔌 Bundling plugins..."
+    mkdir -p "$RESOURCES_DIR/plugins"
+    cp assets/plugins/*.lua "$RESOURCES_DIR/plugins/"
+fi
+
+# Copy shader files (.wgsl)
+if [[ -d "crates/ridgeback-gpu/shaders" ]]; then
+    echo "🎨 Bundling shaders..."
+    mkdir -p "$RESOURCES_DIR/shaders"
+    cp crates/ridgeback-gpu/shaders/*.wgsl "$RESOURCES_DIR/shaders/"
+fi
+
 # ── 4. Write Info.plist ────────────────────────────────────────────────
 cat > "${CONTENTS_DIR}/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
