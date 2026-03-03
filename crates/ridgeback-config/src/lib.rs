@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub use profile::{ColorScheme, CursorStyle, Profile, ShaderEffect, ShaderParams, ShellType,
-                   ShaderEffectConfig, TypingParticlesConfig, TerminalPadding};
+                   ShaderEffectConfig, TypingParticlesConfig, ParticleEffectEntry, TerminalPadding};
 pub use keybindings::KeyBindings;
 pub use rendering::RenderingConfig;
 pub use ai::AiConfig;
@@ -182,7 +182,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profile::{ShaderEffectConfig, TypingParticlesConfig};
+    use crate::profile::ShaderEffectConfig;
 
     /// Old config format: `shader_effect = "none"` — plain string.
     #[test]
@@ -227,31 +227,52 @@ intensity = 0.8
         assert_eq!(w.shader_effect.param_f32("intensity", 0.0), 0.8);
     }
 
-    /// Old config format for typing_particles: plain string.
+    /// Old config format for typing_particles: plain string migrated to particle_effects.
     #[test]
     fn deserialize_typing_particles_from_string() {
-        #[derive(Deserialize)]
-        struct Wrapper {
-            typing_particles: TypingParticlesConfig,
-        }
-        let toml_str = r#"typing_particles = "none""#;
-        let w: Wrapper = toml::from_str(toml_str).unwrap();
-        assert_eq!(w.typing_particles.plugin_id, "none");
+        let toml_str = r#"
+name = "Default"
+shell = "bash"
+typing_particles = "fire"
+"#;
+        let p: profile::Profile = toml::from_str(toml_str).unwrap();
+        assert_eq!(p.particle_effects.len(), 1);
+        assert_eq!(p.particle_effects[0].plugin_id, "fire");
     }
 
-    /// New config format for typing_particles: table.
+    /// Old config format for typing_particles: "none" → empty vec.
     #[test]
-    fn deserialize_typing_particles_from_table() {
-        #[derive(Deserialize)]
-        struct Wrapper {
-            typing_particles: TypingParticlesConfig,
-        }
+    fn deserialize_typing_particles_none_from_string() {
         let toml_str = r#"
-[typing_particles]
-plugin_id = "fire"
+name = "Default"
+shell = "bash"
+typing_particles = "none"
 "#;
-        let w: Wrapper = toml::from_str(toml_str).unwrap();
-        assert_eq!(w.typing_particles.plugin_id, "fire");
+        let p: profile::Profile = toml::from_str(toml_str).unwrap();
+        assert!(p.particle_effects.is_empty());
+    }
+
+    /// New config format for particle_effects: array of tables.
+    #[test]
+    fn deserialize_particle_effects_array() {
+        let toml_str = r#"
+name = "Default"
+shell = "bash"
+
+[[particle_effects]]
+plugin_id = "fire"
+enabled = true
+
+[[particle_effects]]
+plugin_id = "snow"
+enabled = false
+"#;
+        let p: profile::Profile = toml::from_str(toml_str).unwrap();
+        assert_eq!(p.particle_effects.len(), 2);
+        assert_eq!(p.particle_effects[0].plugin_id, "fire");
+        assert!(p.particle_effects[0].enabled);
+        assert_eq!(p.particle_effects[1].plugin_id, "snow");
+        assert!(!p.particle_effects[1].enabled);
     }
 
     /// Full profile with old-style string shader_effect should parse.
@@ -265,6 +286,6 @@ typing_particles = "none"
 "#;
         let p: profile::Profile = toml::from_str(toml_str).unwrap();
         assert_eq!(p.shader_effect.plugin_id, "fire");
-        assert_eq!(p.typing_particles.plugin_id, "none");
+        assert!(p.particle_effects.is_empty());
     }
 }

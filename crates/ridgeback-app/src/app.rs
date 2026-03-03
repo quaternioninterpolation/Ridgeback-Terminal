@@ -443,7 +443,7 @@ impl eframe::App for RidgebackApp {
                         if tab.terminal.profile_name != *key { continue; }
                         updated = true;
                         tab.shader_effect = profile.shader_effect.clone();
-                        tab.typing_particles = profile.typing_particles.clone();
+                        tab.particle_effects = profile.particle_effects.clone();
                         tab.text_shadow_enabled = profile.text_shadow_enabled;
                         tab.text_shadow_alpha = profile.text_shadow_alpha;
                         tab.text_foreground = profile.text_foreground.clone();
@@ -667,8 +667,12 @@ impl eframe::App for RidgebackApp {
         // ── Repaint scheduling with FPS limiting ──────────────────────────
         // ALL repaints go through request_repaint_after to enforce the max FPS cap.
         // Using request_repaint() (immediate) would bypass the limit.
+        let has_active_particles = self.tabs.all_tabs_ref().any(|t|
+            !t.particles.particles.is_empty() || !t.particle_effects.is_empty()
+        );
         let needs_repaint = any_changed || still_animating
             || self.tabs.all_tabs_ref().any(|t| t.shader_effect.plugin_id != "none")
+            || has_active_particles
             || self.tabs.any_active();
 
         if needs_repaint {

@@ -124,11 +124,13 @@ pub fn rasterize_terminal(
 
     let mut pixels = vec![bg_color; width * height];
 
-    // Compute pixel padding offsets from percentages
-    let pad_left   = (width  as f32 * padding.left   / 100.0) as usize;
-    let pad_top    = (height as f32 * padding.top    / 100.0) as usize;
-    let pad_right  = (width  as f32 * padding.right  / 100.0) as usize;
-    let pad_bottom = (height as f32 * padding.bottom / 100.0) as usize;
+    // Compute pixel padding offsets from percentages.
+    // Percentages reference the smaller of width/height for uniform pixel padding.
+    let min_dim = (width as f32).min(height as f32);
+    let pad_left   = (min_dim * padding.left   / 100.0) as usize;
+    let pad_top    = (min_dim * padding.top    / 100.0) as usize;
+    let pad_right  = (min_dim * padding.right  / 100.0) as usize;
+    let pad_bottom = (min_dim * padding.bottom / 100.0) as usize;
 
     // Content area dimensions after padding
     let _content_w = width.saturating_sub(pad_left + pad_right);

@@ -137,75 +137,31 @@ impl ShaderEffectConfig {
     }
 }
 
-/// Selects a typing-particle plugin by ID with free-form parameters.
+/// A single particle effect entry in the per-profile effects list.
 ///
-/// Backward-compatible: accepts `"none"` / `"fire"` strings or a full table.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct TypingParticlesConfig {
-    /// Plugin ID (`"none"` to disable, `"fire"` for built-in fire particles,
-    /// or any user-registered ID).
+/// Each entry selects a particle plugin by ID with free-form parameters
+/// and an enabled toggle.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ParticleEffectEntry {
+    /// Plugin ID (`"fire"`, `"sparkle"`, `"snow"`, or any user-registered ID).
     pub plugin_id: String,
-    /// Freeform parameters forwarded to the Lua `on_keypress()` hook.
+    /// Whether this effect is currently active.
+    pub enabled: bool,
+    /// Freeform parameters forwarded to the Lua emit functions.
     #[serde(default)]
     pub params: HashMap<String, serde_json::Value>,
 }
 
-impl<'de> Deserialize<'de> for TypingParticlesConfig {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        use serde::de::{self, MapAccess, Visitor};
-
-        struct ParticleVisitor;
-
-        impl<'de> Visitor<'de> for ParticleVisitor {
-            type Value = TypingParticlesConfig;
-
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("a particle plugin string (\"none\", \"fire\") or a table { plugin_id, ... }")
-            }
-
-            fn visit_str<E: de::Error>(self, v: &str) -> Result<TypingParticlesConfig, E> {
-                Ok(TypingParticlesConfig {
-                    plugin_id: v.to_string(),
-                    params: HashMap::new(),
-                })
-            }
-
-            fn visit_map<M: MapAccess<'de>>(self, map: M) -> Result<TypingParticlesConfig, M::Error> {
-                #[derive(Deserialize)]
-                #[serde(default)]
-                struct Inner {
-                    plugin_id: String,
-                    params: HashMap<String, serde_json::Value>,
-                }
-                impl Default for Inner {
-                    fn default() -> Self {
-                        Self { plugin_id: "none".to_string(), params: HashMap::new() }
-                    }
-                }
-                let inner = Inner::deserialize(de::value::MapAccessDeserializer::new(map))?;
-                Ok(TypingParticlesConfig {
-                    plugin_id: inner.plugin_id,
-                    params: inner.params,
-                })
-            }
-        }
-
-        deserializer.deserialize_any(ParticleVisitor)
-    }
-}
-
-impl Default for TypingParticlesConfig {
+impl Default for ParticleEffectEntry {
     fn default() -> Self {
-        Self { plugin_id: "none".to_string(), params: HashMap::new() }
+        Self { plugin_id: "none".to_string(), enabled: true, params: HashMap::new() }
     }
 }
 
-impl TypingParticlesConfig {
-    pub fn builtin(id: &str) -> Self {
-        Self { plugin_id: id.to_string(), ..Default::default() }
+impl ParticleEffectEntry {
+    pub fn new(plugin_id: &str) -> Self {
+        Self { plugin_id: plugin_id.to_string(), enabled: true, params: HashMap::new() }
     }
     pub fn param_f32(&self, key: &str, default: f32) -> f32 {
         self.params.get(key)
@@ -214,6 +170,63 @@ impl TypingParticlesConfig {
             .unwrap_or(default)
     }
 }
+
+/// Backward-compatible: accepts the old single `TypingParticlesConfig` string/table,
+/// or the new `[[particle_effects]]` array-of-tables format.
+///
+/// Old formats migrated:
+///   - `typing_particles = "fire"` → `[ParticleEffectEntry { plugin_id: "fire", .. }]`
+///   - `typing_particles = { plugin_id = "fire", params = {...} }` → same
+///   - `particle_effects = [{ plugin_id = "fire", ... }]` → native
+pub fn deserialize_particle_effects<'de, D>(deserializer: D) -> Result<Vec<ParticleEffectEntry>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, SeqAccess, Visitor};
+
+    struct ParticleEffectsVisitor;
+
+    impl<'de> Visitor<'de> for ParticleEffectsVisitor {
+        type Value = Vec<ParticleEffectEntry>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("an array of particle effect entries, a single particle config table, or a plugin id string")
+        }
+
+        // Old format: "fire" or "none"
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Vec<ParticleEffectEntry>, E> {
+            if v == "none" || v.is_empty() {
+                Ok(Vec::new())
+            } else {
+                Ok(vec![ParticleEffectEntry::new(v)])
+            }
+        }
+
+        // New format: array of tables
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<ParticleEffectEntry>, A::Error> {
+            let mut entries = Vec::new();
+            while let Some(entry) = seq.next_element::<ParticleEffectEntry>()? {
+                entries.push(entry);
+            }
+            Ok(entries)
+        }
+
+        // Old table format: { plugin_id = "fire", params = {...} }
+        fn visit_map<M: de::MapAccess<'de>>(self, map: M) -> Result<Vec<ParticleEffectEntry>, M::Error> {
+            let entry = ParticleEffectEntry::deserialize(de::value::MapAccessDeserializer::new(map))?;
+            if entry.plugin_id == "none" || entry.plugin_id.is_empty() {
+                Ok(Vec::new())
+            } else {
+                Ok(vec![entry])
+            }
+        }
+    }
+
+    deserializer.deserialize_any(ParticleEffectsVisitor)
+}
+
+/// Kept for backward-compat with existing code that references the old type.
+pub type TypingParticlesConfig = ParticleEffectEntry;
 
 // ── Legacy types (kept for backward-compat with old config files) ───────────
 
@@ -322,8 +335,18 @@ pub struct Profile {
     pub colors: ColorScheme,
     /// New plugin-driven shader effect config.
     pub shader_effect: ShaderEffectConfig,
-    /// New plugin-driven typing particles config.
-    pub typing_particles: TypingParticlesConfig,
+    /// List of active particle effects (typing, screen, ambient).
+    /// Each entry selects a Lua particle plugin by ID with its own params.
+    ///
+    /// Backward-compatible: old `typing_particles = "fire"` or
+    /// `typing_particles = { plugin_id = "fire" }` configs are migrated
+    /// automatically into a one-element vec.
+    #[serde(
+        default,
+        alias = "typing_particles",
+        deserialize_with = "deserialize_particle_effects"
+    )]
+    pub particle_effects: Vec<ParticleEffectEntry>,
     /// Default text foreground colour as "#RRGGBB". Overrides the colour scheme foreground.
     pub text_foreground: String,
     /// Draw a dark shadow behind text to keep it readable over bright backgrounds.
@@ -418,7 +441,7 @@ impl Profile {
             cursor_blink_ms: 530,
             colors: ColorScheme::catppuccin_mocha(),
             shader_effect: ShaderEffectConfig::default(),
-            typing_particles: TypingParticlesConfig::default(),
+            particle_effects: Vec::new(),
             text_foreground: "#CDD6F4".to_string(),
             text_shadow_enabled: true,
             text_shadow_alpha: 0.65,
@@ -439,7 +462,7 @@ impl Profile {
             cursor_blink_ms: 530,
             colors: ColorScheme::default_dark(),
             shader_effect: ShaderEffectConfig::default(),
-            typing_particles: TypingParticlesConfig::default(),
+            particle_effects: Vec::new(),
             text_foreground: "#CCCCCC".to_string(),
             text_shadow_enabled: true,
             text_shadow_alpha: 0.65,
@@ -460,7 +483,7 @@ impl Profile {
             cursor_blink_ms: 530,
             colors: ColorScheme::catppuccin_mocha(),
             shader_effect: ShaderEffectConfig::default(),
-            typing_particles: TypingParticlesConfig::default(),
+            particle_effects: Vec::new(),
             text_foreground: "#CDD6F4".to_string(),
             text_shadow_enabled: true,
             text_shadow_alpha: 0.65,
@@ -481,7 +504,7 @@ impl Profile {
             cursor_blink_ms: 530,
             colors: ColorScheme::catppuccin_mocha(),
             shader_effect: ShaderEffectConfig::default(),
-            typing_particles: TypingParticlesConfig::default(),
+            particle_effects: Vec::new(),
             text_foreground: "#CDD6F4".to_string(),
             text_shadow_enabled: true,
             text_shadow_alpha: 0.65,
@@ -502,7 +525,7 @@ impl Profile {
             cursor_blink_ms: 530,
             colors: ColorScheme::catppuccin_mocha(),
             shader_effect: ShaderEffectConfig::default(),
-            typing_particles: TypingParticlesConfig::default(),
+            particle_effects: Vec::new(),
             text_foreground: "#CDD6F4".to_string(),
             text_shadow_enabled: true,
             text_shadow_alpha: 0.65,
@@ -523,7 +546,7 @@ impl Profile {
             cursor_blink_ms: 530,
             colors: ColorScheme::catppuccin_mocha(),
             shader_effect: ShaderEffectConfig::default(),
-            typing_particles: TypingParticlesConfig::default(),
+            particle_effects: Vec::new(),
             text_foreground: "#CDD6F4".to_string(),
             text_shadow_enabled: true,
             text_shadow_alpha: 0.65,
@@ -544,7 +567,7 @@ impl Profile {
             cursor_blink_ms: 530,
             colors: ColorScheme::catppuccin_mocha(),
             shader_effect: ShaderEffectConfig::default(),
-            typing_particles: TypingParticlesConfig::default(),
+            particle_effects: Vec::new(),
             text_foreground: "#CDD6F4".to_string(),
             text_shadow_enabled: true,
             text_shadow_alpha: 0.65,

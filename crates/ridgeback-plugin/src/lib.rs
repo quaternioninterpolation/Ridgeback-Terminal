@@ -7,8 +7,8 @@ pub use api::{TerminalQuery, SearchMatch as PluginSearchMatch, SaveFormatPlugin,
 pub use lua_host::{LuaPluginHost, PluginScript, PluginResult, TerminalSnapshot};
 pub use lua_host::{HtmlExporter, MarkdownExporter, JsonExporter};
 pub use shader_plugin::{
-    ParamDescriptor, ParamType, ParticleEvent,
+    ParamDescriptor, ParamType, ParticleEvent, TriggerMode,
     ShaderPlugin, ParticlePlugin,
-    BuiltinFireShaderPlugin, BuiltinCrtShaderPlugin, BuiltinFireParticlePlugin,
+    BuiltinFireShaderPlugin, BuiltinCrtShaderPlugin,
 };
 pub use shader_host::ShaderPluginHost;

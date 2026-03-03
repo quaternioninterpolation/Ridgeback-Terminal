@@ -1,6 +1,6 @@
 use egui;
 use ridgeback_config::Config;
-use ridgeback_plugin::{ShaderPluginHost, shader_plugin::ParamType};
+use ridgeback_plugin::{ShaderPluginHost, shader_plugin::{ParamType, TriggerMode}};
 use crate::casting::CastManager;
 use ridgeback_ai::LocalModelManager;
 use ridgeback_ai::local_manager::{LocalModelStatus, detect_devices};
@@ -318,9 +318,9 @@ impl SettingsWindow {
 
                                 ui.add_space(8.0);
 
-                                // ── Typing Particles section ──────────────
-                                ui.collapsing("✨ Typing Particles", |ui| {
-                                    show_typing_particles_section(ui, &mut profile.typing_particles, key, shader_host);
+                                // ── Particle Effects section ──────────────
+                                ui.collapsing("✨ Particle Effects", |ui| {
+                                    show_particle_effects_section(ui, &mut profile.particle_effects, key, shader_host);
                                 });
                             }
                         } else {
@@ -540,13 +540,20 @@ impl SettingsWindow {
 
         ui.add_space(8.0);
         ui.label(egui::RichText::new("Registered Particle Plugins").strong());
-        egui::Grid::new("particle_plugins_grid").num_columns(2).spacing([12.0, 6.0]).striped(true).show(ui, |ui| {
+        egui::Grid::new("particle_plugins_grid").num_columns(3).spacing([12.0, 6.0]).striped(true).show(ui, |ui| {
             ui.label(egui::RichText::new("ID").strong());
             ui.label(egui::RichText::new("Display Name").strong());
+            ui.label(egui::RichText::new("Triggers").strong());
             ui.end_row();
             for p in shader_host.particle_plugins() {
                 ui.label(p.id());
                 ui.label(p.display_name());
+                let triggers: Vec<&str> = p.trigger_modes().iter().map(|t| match t {
+                    TriggerMode::Keypress => "⌨ keypress",
+                    TriggerMode::Newline => "↵ newline",
+                    TriggerMode::Fullscreen => "🖥 fullscreen",
+                }).collect();
+                ui.label(triggers.join(", "));
                 ui.end_row();
             }
         });
@@ -824,7 +831,14 @@ fn show_padding_section(
     });
     ui.add_space(4.0);
 
-    let fmt = |v: f64, _| format!("{:.1}%", v);
+    // Pixel preview: percentages reference the smaller viewport dimension
+    let screen = ui.ctx().screen_rect();
+    let min_dim = screen.width().min(screen.height());
+
+    let fmt = |v: f64, _| {
+        let px = min_dim as f64 * v / 100.0;
+        format!("{:.1}% ({:.0}px)", v, px)
+    };
 
     match *mode {
         PaddingMode::Uniform => {
@@ -896,6 +910,21 @@ fn show_padding_section(
                 });
         }
     }
+
+    // Show pixel summary
+    let px_top = min_dim * (padding.top / 100.0);
+    let px_bot = min_dim * (padding.bottom / 100.0);
+    let px_left = min_dim * (padding.left / 100.0);
+    let px_right = min_dim * (padding.right / 100.0);
+    ui.add_space(2.0);
+    ui.label(
+        egui::RichText::new(format!(
+            "Pixels: ↑{:.0}  ↓{:.0}  ←{:.0}  →{:.0}",
+            px_top, px_bot, px_left, px_right
+        ))
+        .color(egui::Color32::from_gray(130))
+        .small(),
+    );
 }
 
 // ── Shader effect section ─────────────────────────────────────────────────────
@@ -960,48 +989,121 @@ fn show_shader_effect_section(
     }
 }
 
-// ── Typing particles section ──────────────────────────────────────────────────
+// ── Particle effects list section ─────────────────────────────────────────────
 
-fn show_typing_particles_section(
+fn show_particle_effects_section(
     ui: &mut egui::Ui,
-    particles: &mut ridgeback_config::TypingParticlesConfig,
+    effects: &mut Vec<ridgeback_config::ParticleEffectEntry>,
     profile_key: &str,
     shader_host: &ShaderPluginHost,
 ) {
-    ui.horizontal(|ui| {
-        ui.label("Particle Effect:");
-        egui::ComboBox::from_id_salt(format!("particle_combo_{}", profile_key))
-            .selected_text(particle_display_name(&particles.plugin_id, shader_host))
-            .show_ui(ui, |ui| {
-                if ui.selectable_value(&mut particles.plugin_id, "none".to_string(), "None").clicked() {
-                    particles.params.clear();
-                }
-                for plugin in shader_host.particle_plugins() {
-                    let id = plugin.id().to_string();
-                    if ui.selectable_value(&mut particles.plugin_id, id.clone(), plugin.display_name()).clicked() {
-                        plugin.fill_defaults(&mut particles.params);
+    ui.label(
+        egui::RichText::new("Add typing, screen, or ambient particle effects. Each effect runs its own Lua plugin.")
+            .color(egui::Color32::from_gray(140))
+            .small(),
+    );
+    ui.add_space(4.0);
+
+    // ── Render each effect entry ──────────────────────────────────────────
+    let mut remove_idx: Option<usize> = None;
+
+    for (idx, entry) in effects.iter_mut().enumerate() {
+        let entry_id = format!("pe_{}_{}", profile_key, idx);
+        let display = particle_display_name(&entry.plugin_id, shader_host).to_string();
+
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(6.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    // Enabled toggle
+                    ui.checkbox(&mut entry.enabled, "");
+
+                    // Plugin selector combo
+                    egui::ComboBox::from_id_salt(format!("pe_combo_{}", entry_id))
+                        .selected_text(display)
+                        .show_ui(ui, |ui| {
+                            for plugin in shader_host.particle_plugins() {
+                                let id = plugin.id().to_string();
+                                if ui.selectable_value(&mut entry.plugin_id, id.clone(), plugin.display_name()).clicked() {
+                                    entry.params.clear();
+                                    plugin.fill_defaults(&mut entry.params);
+                                }
+                            }
+                        });
+
+                    // Trigger mode badges
+                    if let Some(plugin) = shader_host.get_particle_plugin(&entry.plugin_id) {
+                        for mode in plugin.trigger_modes() {
+                            let badge = match mode {
+                                TriggerMode::Keypress => "⌨",
+                                TriggerMode::Newline => "↵",
+                                TriggerMode::Fullscreen => "🖥",
+                            };
+                            ui.small(badge);
+                        }
+                    }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("🗑").on_hover_text("Remove this effect").clicked() {
+                            remove_idx = Some(idx);
+                        }
+                    });
+                });
+
+                // Per-effect params (collapsible)
+                if entry.enabled {
+                    if let Some(plugin) = shader_host.get_particle_plugin(&entry.plugin_id) {
+                        plugin.fill_defaults(&mut entry.params);
+                        let schema = plugin.param_schema();
+                        if !schema.is_empty() {
+                            ui.add_space(4.0);
+                            egui::Grid::new(format!("pe_params_{}", entry_id))
+                                .num_columns(2)
+                                .spacing([10.0, 4.0])
+                                .show(ui, |ui| {
+                                    for desc in schema {
+                                        ui.label(&desc.label);
+                                        show_param_editor(
+                                            ui, &desc.key, &desc.ty, &mut entry.params,
+                                            format!("pe_p_{}_{}", entry_id, &desc.key),
+                                        );
+                                        ui.end_row();
+                                    }
+                                });
+                        }
                     }
                 }
             });
-    });
-
-    if particles.plugin_id == "none" { return; }
-
-    if let Some(plugin) = shader_host.get_particle_plugin(&particles.plugin_id) {
-        plugin.fill_defaults(&mut particles.params);
-        ui.add_space(6.0);
-        egui::Grid::new(format!("particle_params_{}", profile_key))
-            .num_columns(2)
-            .spacing([10.0, 6.0])
-            .show(ui, |ui| {
-                for desc in plugin.param_schema() {
-                    ui.label(&desc.label);
-                    show_param_editor(ui, &desc.key, &desc.ty, &mut particles.params,
-                        format!("pp_{}_{}", profile_key, &desc.key));
-                    ui.end_row();
-                }
-            });
+        ui.add_space(2.0);
     }
+
+    // Process removal
+    if let Some(idx) = remove_idx {
+        effects.remove(idx);
+    }
+
+    // ── Add new effect button ─────────────────────────────────────────────
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        if ui.button("➕ Add Effect").clicked() {
+            // Default to first available plugin
+            let first_id = shader_host.particle_plugins().first()
+                .map(|p| p.id().to_string())
+                .unwrap_or_else(|| "none".to_string());
+            let mut new_entry = ridgeback_config::ParticleEffectEntry::new(&first_id);
+            if let Some(plugin) = shader_host.get_particle_plugin(&first_id) {
+                plugin.fill_defaults(&mut new_entry.params);
+            }
+            effects.push(new_entry);
+        }
+        if effects.is_empty() {
+            ui.label(
+                egui::RichText::new("No particle effects active.")
+                    .color(egui::Color32::from_gray(120))
+                    .italics(),
+            );
+        }
+    });
 }
 
 // ── Shared param editor widget ────────────────────────────────────────────────

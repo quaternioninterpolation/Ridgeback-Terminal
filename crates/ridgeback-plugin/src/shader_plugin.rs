@@ -79,9 +79,25 @@ impl ParamDescriptor {
     }
 }
 
+// ── Trigger mode ──────────────────────────────────────────────────────────────
+
+/// When a particle plugin should fire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TriggerMode {
+    /// Emit on every keypress (cursor position).
+    Keypress,
+    /// Emit when Enter / newline is pressed.
+    Newline,
+    /// Emit every frame (snow, bubbles, ambient effects).
+    Fullscreen,
+}
+
 // ── Particle event ───────────────────────────────────────────────────────────
 
-/// A single particle spawned by a typing-particle plugin.
+/// A single particle spawned by a particle plugin.
+///
+/// Colour is specified directly as RGBA (0.0–1.0 each).
+/// The renderer fades alpha automatically based on remaining life.
 #[derive(Debug, Clone)]
 pub struct ParticleEvent {
     pub x: f32,
@@ -91,12 +107,12 @@ pub struct ParticleEvent {
     /// Initial lifetime in seconds.
     pub life: f32,
     pub radius: f32,
-    /// Normalised heat/intensity 0..1 (drives colour).
-    pub heat: f32,
-    /// True = soft smoke/cloud, false = solid ember.
-    pub is_smoke: bool,
-    /// Optional RGBA override colour; [0,0,0,0] means "use plugin palette".
+    /// RGBA colour (0.0–1.0 per component). `a` = base opacity before life-fade.
     pub color: [f32; 4],
+    /// Gravity multiplier (default 1.0). 0 = no gravity, negative = float up.
+    pub gravity: f32,
+    /// Drag coefficient (default 0.5). Higher = more air resistance.
+    pub drag: f32,
 }
 
 // ── Shader plugin trait ──────────────────────────────────────────────────────
@@ -121,18 +137,34 @@ pub trait ShaderPlugin: Send + Sync {
 
 // ── Particle plugin trait ────────────────────────────────────────────────────
 
-/// A registered typing-particle effect.
+/// A registered particle effect — fully Lua-driven.
 pub trait ParticlePlugin: Send + Sync {
     fn id(&self) -> &str;
     fn display_name(&self) -> &str;
     fn param_schema(&self) -> &[ParamDescriptor];
+    /// Which events this plugin responds to.
+    fn trigger_modes(&self) -> &[TriggerMode];
     fn fill_defaults(&self, params: &mut HashMap<String, Value>) {
         for desc in self.param_schema() {
             params.entry(desc.key.clone()).or_insert_with(|| desc.default.clone());
         }
     }
     /// Emit particles for a keypress at pixel position (x, y).
-    fn emit(&self, x: f32, y: f32, params: &HashMap<String, Value>) -> Vec<ParticleEvent>;
+    fn emit(&self, x: f32, y: f32, params: &HashMap<String, Value>) -> Vec<ParticleEvent> {
+        let _ = (x, y, params);
+        vec![]
+    }
+    /// Emit particles when Enter/newline is pressed at (x, y).
+    fn emit_newline(&self, x: f32, y: f32, params: &HashMap<String, Value>) -> Vec<ParticleEvent> {
+        let _ = (x, y, params);
+        vec![]
+    }
+    /// Emit particles every frame (for fullscreen ambient effects).
+    /// `dt` = frame delta, `width`/`height` = viewport size.
+    fn emit_frame(&self, dt: f32, width: f32, height: f32, params: &HashMap<String, Value>) -> Vec<ParticleEvent> {
+        let _ = (dt, width, height, params);
+        vec![]
+    }
 }
 
 // ── Built-in fire shader plugin ──────────────────────────────────────────────
@@ -200,81 +232,5 @@ impl ShaderPlugin for BuiltinCrtShaderPlugin {
     fn param_schema(&self) -> &[ParamDescriptor] { &self.schema }
 }
 
-// ── Built-in fire typing-particle plugin ─────────────────────────────────────
 
-/// Built-in typing-particle plugin that emits fire embers + smoke on each keypress.
-/// All particle logic lives here in Rust (no Lua required for the built-in).
-pub struct BuiltinFireParticlePlugin {
-    schema: Vec<ParamDescriptor>,
-}
-
-impl BuiltinFireParticlePlugin {
-    pub fn new() -> Self {
-        let schema = vec![
-            ParamDescriptor::float("particle_multiplier", "Particle Multiplier", 0.0, 5.0, 1.0),
-            ParamDescriptor::color("color_ember", "Ember Colour", "#ff6600"),
-            ParamDescriptor::color("color_smoke", "Smoke Colour", "#888888"),
-        ];
-        Self { schema }
-    }
-}
-
-impl Default for BuiltinFireParticlePlugin {
-    fn default() -> Self { Self::new() }
-}
-
-impl ParticlePlugin for BuiltinFireParticlePlugin {
-    fn id(&self) -> &str { "fire" }
-    fn display_name(&self) -> &str { "🔥 Fire Particles" }
-    fn param_schema(&self) -> &[ParamDescriptor] { &self.schema }
-
-    fn emit(&self, x: f32, y: f32, params: &HashMap<String, Value>) -> Vec<ParticleEvent> {
-        let mult = params.get("particle_multiplier")
-            .and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
-        if mult <= 0.0 { return vec![]; }
-
-        let ember_count = (8.0 * mult).round() as usize;
-        let smoke_count = (5.0 * mult).round() as usize;
-
-        // Cheap deterministic RNG seeded from position
-        let mut rng_state = (x * 1664525.0 + y * 1013904223.0) as u64;
-        let mut next = move || -> f32 {
-            rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            ((rng_state >> 33) as f32) / (u32::MAX as f32)
-        };
-
-        let mut particles = Vec::with_capacity(ember_count + smoke_count);
-
-        for _ in 0..ember_count {
-            let speed = 20.0 + next() * 60.0;
-            let angle = next() * std::f32::consts::TAU;
-            particles.push(ParticleEvent {
-                x, y,
-                vx: angle.cos() * speed * 0.4,
-                vy: -(30.0 + next() * 80.0),
-                life: 0.4 + next() * 0.5,
-                radius: 2.0 + next() * 3.0,
-                heat: 0.7 + next() * 0.3,
-                is_smoke: false,
-                color: [0.0; 4],
-            });
-        }
-
-        for _ in 0..smoke_count {
-            particles.push(ParticleEvent {
-                x: x + (next() - 0.5) * 10.0,
-                y,
-                vx: (next() - 0.5) * 15.0,
-                vy: -(10.0 + next() * 25.0),
-                life: 0.8 + next() * 0.8,
-                radius: 4.0 + next() * 6.0,
-                heat: 0.0,
-                is_smoke: true,
-                color: [0.0; 4],
-            });
-        }
-
-        particles
-    }
-}
 

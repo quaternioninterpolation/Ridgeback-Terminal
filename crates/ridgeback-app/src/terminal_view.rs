@@ -1,4 +1,4 @@
-﻿use arboard::Clipboard;
+use arboard::Clipboard;
 use egui;
 use ridgeback_core::cell::Color;
 use ridgeback_core::input_buffer::InputAction;
@@ -35,11 +35,17 @@ pub fn show_terminal(
 
     let full_rect = ui.available_rect_before_wrap();
 
-    // Apply terminal padding (percentages of full rect dimensions)
-    let pad_left   = full_rect.width()  * (tab.padding.left   / 100.0);
-    let pad_right  = full_rect.width()  * (tab.padding.right  / 100.0);
-    let pad_top    = full_rect.height() * (tab.padding.top    / 100.0);
-    let pad_bottom = full_rect.height() * (tab.padding.bottom / 100.0);
+    // Apply terminal padding.
+    // Percentages are relative to the *smaller* of width/height so that
+    // equal percentage values produce equal pixel padding on all four sides.
+    let w = full_rect.width();
+    let h = full_rect.height();
+    let min_dim = w.min(h);
+
+    let pad_left   = min_dim * (tab.padding.left   / 100.0);
+    let pad_right  = min_dim * (tab.padding.right  / 100.0);
+    let pad_top    = min_dim * (tab.padding.top    / 100.0);
+    let pad_bottom = min_dim * (tab.padding.bottom / 100.0);
     let term_rect = egui::Rect::from_min_max(
         egui::pos2(full_rect.left() + pad_left, full_rect.top() + pad_top),
         egui::pos2(full_rect.right() - pad_right, full_rect.bottom() - pad_bottom),
@@ -228,9 +234,10 @@ pub fn show_terminal(
 
                     let row_rect = row_resp.response.rect;
 
-                    // Cursor position in terminal-local coordinates (for particles)
-                    cursor_screen_x = (row_rect.left() + cursor_col as f32 * char_w) - term_rect.left();
-                    cursor_screen_y = row_rect.center().y - term_rect.top();
+                    // Cursor position in full_rect-local coordinates (for particles).
+                    // Particles render on full_rect, so positions must be relative to it.
+                    cursor_screen_x = (row_rect.left() + cursor_col as f32 * char_w) - full_rect.left();
+                    cursor_screen_y = row_rect.center().y - full_rect.top();
 
                     // Keyboard input — ONLY for the focused terminal AND when no overlay is active
                     if is_focused_terminal && !tab.terminal.exited && !overlay_active {
@@ -275,7 +282,14 @@ pub fn show_terminal(
                                 }
                                 egui::Event::Key { key, pressed: true, modifiers, .. } => {
                                     match key {
-                                        egui::Key::Enter      => { let _ = tab.terminal.write_to_pty(b"\r"); }
+                                        egui::Key::Enter      => {
+                                            let _ = tab.terminal.write_to_pty(b"\r");
+                                            // Emit newline particles
+                                            let spawned = crate::particle_emit::emit_newline_for_tab(
+                                                cursor_screen_x, cursor_screen_y, tab,
+                                            );
+                                            tab.particles.spawn(spawned);
+                                        }
                                         // Backspace: Ctrl+Backspace = delete word, plain = delete char
                                         egui::Key::Backspace if modifiers.ctrl || modifiers.alt => {
                                             // Ctrl+W (0x17) is the standard "erase word" in terminals
@@ -492,8 +506,9 @@ pub fn show_terminal(
         show_context_menu(ui, tab, clipboard, &scrollback_lines_ref, &visible_cells_ref);
     }
 
-    // Particle overlay (positioned relative to padded text area)
-    draw_particles_overlay(ui, term_rect, tab);
+    // Particle overlay — covers full_rect (snow etc. can fill padding)
+    // Drawn BEFORE shader overlay so CRT/fire post-processing applies on top.
+    draw_particles_overlay(ui, full_rect, tab, pad_bottom, allow_shader_repaint);
 
     // Shader overlay — covers the full rect (not padded) so CRT distortion extends to edges
     apply_shader_overlay(ui, full_rect, tab, allow_shader_repaint, bg_texture, default_fg, bg_color, font_size);
@@ -625,6 +640,11 @@ fn blend_fire_ramp(heat: f32, base: (u8,u8,u8), mid: (u8,u8,u8), top: (u8,u8,u8)
     }
 }
 
+#[inline(always)]
+fn lerp(a: u8, b: u8, t: f32) -> u8 {
+    (a as f32 + (b as f32 - a as f32) * t.clamp(0.0, 1.0)) as u8
+}
+
 fn parse_param_color(hex: Option<&str>, dr: u8, dg: u8, db: u8) -> (u8,u8,u8) {
     let hex = match hex { Some(h) => h, None => return (dr, dg, db) };
     let hex = hex.trim_start_matches('#');
@@ -638,62 +658,62 @@ fn parse_param_color(hex: Option<&str>, dr: u8, dg: u8, db: u8) -> (u8,u8,u8) {
 // ── Particle overlay ──────────────────────────────────────────────────────────
 
 /// Draw all live particles for the tab on top of the terminal text.
-pub fn draw_particles_overlay(ui: &mut egui::Ui, rect: egui::Rect, tab: &mut TabState) {
-    if tab.particles.particles.is_empty() { return; }
-    let dt = ui.ctx().input(|i| i.unstable_dt).min(0.05);
-    tab.particles.update(dt);
+///
+/// `rect` is `full_rect` (the entire viewport including padding).
+/// `pad_bottom` is the bottom padding in pixels — snow piles up within this.
+/// `allow_repaint` gates fullscreen emission and physics ticks to the
+/// configured max FPS / background-update setting. Rendering of existing
+/// particles always happens so they don't flicker on skipped frames.
+pub fn draw_particles_overlay(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    tab: &mut TabState,
+    pad_bottom: f32,
+    allow_repaint: bool,
+) {
+    if allow_repaint {
+        // Fullscreen/ambient emitter: only spawn on allowed frames
+        let dt = ui.ctx().input(|i| i.unstable_dt).min(0.05);
+        {
+            let spawned = crate::particle_emit::emit_frame_for_tab(
+                dt, rect.width(), rect.height(), tab,
+            );
+            tab.particles.spawn(spawned);
+        }
 
+        // Advance physics only on allowed frames
+        let floor_y = rect.height();
+        let max_pile = pad_bottom.max(4.0);
+        tab.particles.update_with_floor(dt, floor_y, max_pile, rect.width());
+    }
+
+    if tab.particles.particles.is_empty() { return; }
+
+    // Always render existing particles (even on skipped frames) to avoid flicker
     let painter = ui.painter_at(rect);
 
-    // Smoke first (behind embers)
     for lp in &tab.particles.particles {
         let p = &lp.event;
-        if !p.is_smoke { continue; }
-        let life_frac = (p.life / 1.6_f32).clamp(0.0, 1.0);
-        let alpha = ((life_frac * life_frac) * 55.0) as u8;
-        if alpha < 3 { continue; }
-        let grey = (60.0 + (1.0 - life_frac) * 80.0) as u8;
+        let life_frac = if lp.initial_life > 0.0 { (p.life / lp.initial_life).clamp(0.0, 1.0) } else { 0.0 };
+        // Quadratic fade-out
+        let fade = life_frac * life_frac;
+        let alpha = (p.color[3] * fade * 255.0).round() as u8;
+        if alpha < 2 { continue; }
+        let r = (p.color[0] * 255.0).round() as u8;
+        let g = (p.color[1] * 255.0).round() as u8;
+        let b = (p.color[2] * 255.0).round() as u8;
+        let color = egui::Color32::from_rgba_unmultiplied(r, g, b, alpha);
         painter.circle_filled(
-            egui::pos2(rect.left() + p.x, rect.top() + p.y), p.radius,
-            egui::Color32::from_rgba_unmultiplied(grey, grey, grey, alpha),
+            egui::pos2(rect.left() + p.x, rect.top() + p.y),
+            p.radius,
+            color,
         );
     }
-    // Embers on top
-    for lp in &tab.particles.particles {
-        let p = &lp.event;
-        if p.is_smoke { continue; }
-        let life_frac = (p.life / 0.9_f32).clamp(0.0, 1.0);
-        let alpha = ((life_frac * life_frac) * 200.0) as u8;
-        if alpha < 5 { continue; }
-        let heat = p.heat.clamp(0.0, 1.0);
-        let (r, g, b) = heat_to_rgb(heat);
-        painter.circle_filled(
-            egui::pos2(rect.left() + p.x, rect.top() + p.y), p.radius,
-            egui::Color32::from_rgba_unmultiplied(r, g, b, alpha),
-        );
-        painter.circle_filled(
-            egui::pos2(rect.left() + p.x, rect.top() + p.y), p.radius * 2.2,
-            egui::Color32::from_rgba_unmultiplied(r, g / 2, 0, alpha / 6),
-        );
-    }
-
-    if !tab.particles.particles.is_empty() {
-        ui.ctx().request_repaint();
-    }
+    // NOTE: no request_repaint() here — the app's repaint scheduler in
+    // app.rs already calls request_repaint_after(shader_interval) which
+    // respects max_shader_fps and update_in_background settings.
 }
 
-fn heat_to_rgb(heat: f32) -> (u8, u8, u8) {
-    let h = heat.clamp(0.0, 1.0);
-    if h < 0.25      { (lerp(0, 160, h / 0.25), 0, 0) }
-    else if h < 0.55 { (lerp(160, 255, (h - 0.25) / 0.30), lerp(0, 100, (h - 0.25) / 0.30), 0) }
-    else if h < 0.80 { (255, lerp(100, 220, (h - 0.55) / 0.25), lerp(0, 20, (h - 0.55) / 0.25)) }
-    else             { (255, lerp(220, 255, (h - 0.80) / 0.20), lerp(20, 200, (h - 0.80) / 0.20)) }
-}
-
-#[inline(always)]
-fn lerp(a: u8, b: u8, t: f32) -> u8 {
-    (a as f32 + (b as f32 - a as f32) * t.clamp(0.0, 1.0)) as u8
-}
 
 
 // ── Mouse selection helpers ───────────────────────────────────────────────────

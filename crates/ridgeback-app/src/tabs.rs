@@ -1,5 +1,5 @@
 ﻿use anyhow::Result;
-use ridgeback_config::{Profile, ShaderEffectConfig, TypingParticlesConfig};
+use ridgeback_config::{Profile, ShaderEffectConfig, ParticleEffectEntry};
 use ridgeback_core::Terminal;
 use ridgeback_plugin::ParticleEvent;
 use crate::find_overlay::FindOverlay;
@@ -87,6 +87,10 @@ pub struct LiveParticle {
     pub event: ParticleEvent,
     /// Seconds elapsed since this particle was spawned.
     pub age: f32,
+    /// Life value at spawn time (for alpha fade computation).
+    pub initial_life: f32,
+    /// True when the particle has settled on the floor (pileup).
+    pub settled: bool,
 }
 
 /// Per-tab particle simulation state. Fed by `ParticlePlugin::emit()`.
@@ -103,32 +107,82 @@ impl ParticleState {
     }
 
     /// Advance particle physics by `dt` seconds.
+    /// Uses per-particle gravity and drag fields for generic simulation.
+    #[allow(dead_code)]
     pub fn update(&mut self, dt: f32) {
-        self.rng = (self.rng * 1664525.0 + 1013904223.0) % 1_000_000.0;
+        self.update_with_floor(dt, f32::MAX, 0.0, 1.0);
+    }
+
+    /// Advance physics with a floor for pileup.
+    ///
+    /// `floor_y` is the viewport bottom in local coords.
+    /// `max_pile` is the maximum pile height (bottom padding).
+    /// `viewport_width` is the full viewport width for pile bucket computation.
+    pub fn update_with_floor(&mut self, dt: f32, floor_y: f32, max_pile: f32, viewport_width: f32) {
+        let pile_limit = floor_y - max_pile;
+        let vw = viewport_width.max(1.0);
+
+        // Compute current pile surface by x-buckets for uneven natural pile.
+        const BUCKETS: usize = 16;
+        let mut pile_surface = [floor_y; BUCKETS];
+        for lp in &self.particles {
+            if lp.settled {
+                let p = &lp.event;
+                let bx = ((p.x / vw) * BUCKETS as f32)
+                    .clamp(0.0, (BUCKETS - 1) as f32) as usize;
+                pile_surface[bx] = pile_surface[bx].min(p.y);
+            }
+        }
+
         for lp in &mut self.particles {
             let p = &mut lp.event;
             lp.age += dt;
+
+            // Settled particles just fade out slowly
+            if lp.settled {
+                p.life -= dt * 0.15;
+                continue;
+            }
+
             p.x += p.vx * dt;
             p.y += p.vy * dt;
-            if p.is_smoke {
-                p.vy += -40.0 * dt;
-                p.vx *= 1.0 - dt * 0.8;
-                p.radius += dt * 8.0;
-            } else {
-                p.vy += 120.0 * dt; // embers fall
-                p.heat = (p.heat - dt * 0.8).max(0.0);
-            }
+            // Generic gravity (positive = downward)
+            p.vy += 80.0 * p.gravity * dt;
+            // Drag
+            let drag_factor = 1.0 - (p.drag * dt).min(1.0);
+            p.vx *= drag_factor;
+            p.vy *= drag_factor;
             p.life -= dt;
+
+            // Floor / pile collision for downward-moving particles
+            if p.vy > 0.0 && max_pile > 0.0 {
+                // Determine the surface height at this particle's x position
+                let bx = ((p.x / vw) * BUCKETS as f32)
+                    .clamp(0.0, (BUCKETS - 1) as f32) as usize;
+                let surface = pile_surface[bx];
+                let settle_y = surface - p.radius;
+
+                if p.y + p.radius >= surface && settle_y >= pile_limit {
+                    p.y = settle_y.max(pile_limit);
+                    p.vx = 0.0;
+                    p.vy = 0.0;
+                    lp.settled = true;
+                    let settle_life = 5.0_f32;
+                    p.life = settle_life;
+                    lp.initial_life = settle_life;
+                    // Update surface for subsequent particles this frame
+                    pile_surface[bx] = pile_surface[bx].min(p.y);
+                }
+            }
         }
-        self.particles.retain(|lp| {
-            lp.event.life > 0.0 && (!lp.event.is_smoke || lp.event.radius < 40.0)
-        });
+        self.particles.retain(|lp| lp.event.life > 0.0);
     }
 
     /// Spawn particles from a plugin emit result.
     pub fn spawn(&mut self, events: Vec<ParticleEvent>) {
         for e in events {
-            self.particles.push(LiveParticle { event: e, age: 0.0 });
+            let initial_life = e.life;
+            self.particles.push(LiveParticle { event: e, age: 0.0, initial_life, settled: false });
         }
     }
 }
@@ -156,8 +210,8 @@ pub struct TabState {
     pub scroll_offset: usize,
     /// Plugin-driven shader effect for this tab.
     pub shader_effect: ShaderEffectConfig,
-    /// Plugin-driven typing particles for this tab.
-    pub typing_particles: TypingParticlesConfig,
+    /// Active particle effects for this tab (typing, screen, ambient).
+    pub particle_effects: Vec<ParticleEffectEntry>,
     /// Display title shown in the tab bar.
     pub tab_title: String,
     /// Mouse text selection state.
@@ -225,7 +279,7 @@ impl TabGroup {
             command_query: CommandQueryOverlay::new(),
             scroll_offset: 0,
             shader_effect: profile.shader_effect.clone(),
-            typing_particles: profile.typing_particles.clone(),
+            particle_effects: profile.particle_effects.clone(),
             tab_title,
             terminal_selection: None,
             selection_in_progress: false,

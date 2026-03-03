@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Lua-driven particle system** — particle effects are now entirely defined in Lua plugins. Users can create custom particles with full control over colours, physics, opacity, and spawn logic.
+  - Three trigger modes: **keypress** (emit at cursor on typing), **newline** (emit on Enter), **fullscreen** (ambient effects every frame, e.g. snow, bubbles).
+  - Particles specify direct RGBA colour with transparency (0–1 alpha).
+  - Per-particle `gravity` and `drag` fields for custom physics.
+  - Bundled plugins: 🔥 Fire Particles, ✨ Sparkles, ❄️ Snow.
+  - Drop `.lua` files in `<config_dir>/ridgeback/plugins/` to add custom effects.
+- **Snow particle plugin** — new bundled fullscreen particle effect (`snow_particles.lua`) with configurable density, fall speed, sway, colour, opacity, and size.
+- **Particle opacity/transparency** — all particles now support per-particle alpha (0.0–1.0) set directly in Lua, with automatic quadratic fade-out over lifetime.
+
+### Changed
+- **Particle system migrated from Rust to Lua** — the built-in `BuiltinFireParticlePlugin` (Rust) has been removed. Fire particle logic now lives in `fire_particles.lua` with full emit code. The generic `ParticleEvent` struct no longer has `heat` or `is_smoke` fields; colour is specified directly as `[r, g, b, a]`.
+- **Particle renderer generalised** — `draw_particles_overlay` no longer uses fire-specific two-pass smoke/ember rendering. All particles are rendered uniformly using their RGBA colour with life-based alpha fade.
+- **Particle physics generalised** — `ParticleState::update` uses per-particle `gravity` and `drag` instead of hardcoded smoke/ember physics.
+- **Plugin loading** — the plugin host now scans both bundled (`assets/plugins/`) and user (`<config_dir>/ridgeback/plugins/`) directories. Bundled plugins load first; user plugins override by ID.
+- **Settings UI** — particle plugin list now shows trigger mode badges (⌨ keypress, ↵ newline, 🖥 fullscreen).
+
+### Removed
+- `BuiltinFireParticlePlugin` Rust struct — replaced by `fire_particles.lua`.
+- `heat`, `is_smoke` fields from `ParticleEvent`.
+- `heat_to_rgb` hardcoded colour ramp function.
+
+### Added (continued from previous)
 - **CRT barrel distortion** — the CRT shader now applies real per-pixel barrel distortion to terminal text via CPU rasterization with `fontdue` and a barrel-distorted egui mesh, replacing the old flat overlay that only drew grey rectangles.
 - **Terminal padding** — configurable per-profile padding (percentage of screen width/height) with three editing modes in Settings:
   - **Uniform** — single slider for all sides.
