@@ -1,3 +1,6 @@
+// Hide the console window on Windows release builds.
+#![windows_subsystem = "windows"]
+
 mod app;
 mod tabs;
 mod terminal_view;

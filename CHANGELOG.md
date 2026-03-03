@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.1.6] — 2026-03-04
+
+### Fixed
+- **Backspace interpreted as space/tab in macOS `.app` bundles** — when launched as a bundled `.app`, the PTY inherited `launchd`'s minimal environment with no controlling terminal, causing `openpty()` to produce wrong termios defaults (e.g. incorrect `VERASE`). Fixed by explicitly setting sane termios control characters (`VERASE=DEL`, `VINTR=^C`, `VEOF=^D`, etc.) and line discipline flags after PTY creation, and by ensuring `TERM=xterm-256color`, `COLORTERM=truecolor`, and `LANG=en_US.UTF-8` are set in the PTY environment.
+- **Particle plugins and shaders missing in macOS `.app` bundles** — the bundle script now copies `assets/plugins/*.lua` into `Contents/Resources/plugins/` and `crates/ridgeback-gpu/shaders/*.wgsl` into `Contents/Resources/shaders/`. Added `Contents/Resources/shaders` as a lookup candidate in `find_shaders_dir()` (was already present for plugins).
+- **Console window appearing behind the GUI on Windows** — added `#![windows_subsystem = "windows"]` to suppress the shadow cmd/terminal window that appeared when launching the app on Windows.
+- **IME spurious text events on macOS** — disabled IME on the viewport (`IMEAllowed(false)`, `IMEPurpose::Terminal`) and restructured keyboard event processing into a two-pass loop to suppress spurious `Event::Text` events alongside non-printable key presses.
+
+---
+
+## [0.1.4] — 2026-03-03
 
 ### Added
 - **Lua-driven particle system** — particle effects are now entirely defined in Lua plugins. Users can create custom particles with full control over colours, physics, opacity, and spawn logic.
@@ -26,6 +36,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Snow / rain pileup** — downward-moving particles that reach the viewport floor settle in place and stack up using 16 x-buckets for a natural uneven pile. Pile height is capped at the bottom padding so settled particles never overlap terminal text. Settled particles fade out slowly over ~5 seconds.
 - **Particle opacity/transparency** — all particles support per-particle alpha (0.0–1.0) set directly in Lua, with automatic quadratic life-based fade-out.
 - **Padding pixel preview** — the padding settings sliders now display both the percentage and the computed pixel value (e.g. `2.5% (15px)`), with a summary line showing all four sides.
+- **CRT barrel distortion** — the CRT shader now applies real per-pixel barrel distortion to terminal text via CPU rasterization with `fontdue` and a barrel-distorted egui mesh, replacing the old flat overlay that only drew grey rectangles.
+- **Terminal padding** — configurable per-profile padding (percentage of screen width/height) with three editing modes in Settings:
+  - **Uniform** — single slider for all sides.
+  - **W × H** — separate horizontal and vertical sliders.
+  - **Individual** — separate top/bottom/left/right sliders.
+  - Default: 2.5% on all sides. Padding is applied to both normal rendering and CRT post-process.
+- **FPS counter overlay** — toggleable from Settings → Rendering. Displays real GPU frame rate in a pill at the bottom-right corner.
+- **Max shader FPS enforcement** — the configured max FPS limit is now actually enforced; all repaint requests use `request_repaint_after` instead of immediate repaints.
+- **Background FPS limiting** — when "Update terminals in background" is off and the window loses focus, rendering is capped at 1 FPS instead of stopping entirely.
+- Right-click context menu on profile list in Settings with **Duplicate** and **Remove** options.
+  - Duplicate appends a count suffix to the name (e.g. "Zsh (1)", "Zsh (2)").
+  - Remove prompts a confirmation dialog before deleting; the last profile cannot be removed.
+- macOS code signing and notarization support in CI (`release.yml`).
+  - Ad-hoc codesigning added to `bundle-macos.sh` for local builds.
+  - Full Developer ID signing + Apple notarization when secrets are configured.
+  - Hardened runtime entitlements (`scripts/entitlements.plist`) for wgpu/GPU compatibility.
+- macOS Gatekeeper workaround instructions in GitHub Release notes.
+- `CHANGELOG.md` — this file.
 
 ### Changed
 - **Particle system migrated from Rust to Lua** — the built-in `BuiltinFireParticlePlugin` (Rust) has been removed. Fire particle logic now lives entirely in `fire_particles.lua`. The `ParticleEvent` struct no longer has `heat` or `is_smoke` fields; colour is specified directly as `[r, g, b, a]`.
@@ -52,25 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Uniform padding producing different pixel values on horizontal vs vertical axes.
 - UTF-8 BOM in `terminal_view.rs` causing a compilation error.
 
-### Added (continued from previous)
-- **CRT barrel distortion** — the CRT shader now applies real per-pixel barrel distortion to terminal text via CPU rasterization with `fontdue` and a barrel-distorted egui mesh, replacing the old flat overlay that only drew grey rectangles.
-- **Terminal padding** — configurable per-profile padding (percentage of screen width/height) with three editing modes in Settings:
-  - **Uniform** — single slider for all sides.
-  - **W × H** — separate horizontal and vertical sliders.
-  - **Individual** — separate top/bottom/left/right sliders.
-  - Default: 2.5% on all sides. Padding is applied to both normal rendering and CRT post-process.
-- **FPS counter overlay** — toggleable from Settings → Rendering. Displays real GPU frame rate in a pill at the bottom-right corner.
-- **Max shader FPS enforcement** — the configured max FPS limit is now actually enforced; all repaint requests use `request_repaint_after` instead of immediate repaints.
-- **Background FPS limiting** — when "Update terminals in background" is off and the window loses focus, rendering is capped at 1 FPS instead of stopping entirely.
-- Right-click context menu on profile list in Settings with **Duplicate** and **Remove** options.
-  - Duplicate appends a count suffix to the name (e.g. "Zsh (1)", "Zsh (2)").
-  - Remove prompts a confirmation dialog before deleting; the last profile cannot be removed.
-- macOS code signing and notarization support in CI (`release.yml`).
-  - Ad-hoc codesigning added to `bundle-macos.sh` for local builds.
-  - Full Developer ID signing + Apple notarization when secrets are configured.
-  - Hardened runtime entitlements (`scripts/entitlements.plist`) for wgpu/GPU compatibility.
-- macOS Gatekeeper workaround instructions in GitHub Release notes.
-- `CHANGELOG.md` — this file.
+### Added
+
+[0.1.3]: https://github.com/quaternioninterpolation/Ridgeback-Terminal/releases/tag/v0.1.4
 
 ---
 
@@ -104,8 +116,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Battery-aware frame pacing for shader effects.
 - Google Cast / SSDP device discovery (streaming protocol stubbed).
 
----
-
-[Unreleased]: https://github.com/quaternioninterpolation/Ridgeback-Terminal/compare/v0.1.3...HEAD
 [0.1.3]: https://github.com/quaternioninterpolation/Ridgeback-Terminal/releases/tag/v0.1.3
-
