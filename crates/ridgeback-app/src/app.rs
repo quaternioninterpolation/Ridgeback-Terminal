@@ -48,18 +48,36 @@ pub struct RidgebackApp {
     fps_display: f32,
     /// Last time a shader repaint was allowed (for throttling).
     last_shader_repaint: std::time::Instant,
+    /// Whether the window was focused on the previous frame — used to detect
+    /// the focus→background transition so we can render one final "freeze frame".
+    was_focused: bool,
 }
 impl RidgebackApp {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config, initial_dir: Option<std::path::PathBuf>) -> Self {
         let shortcuts = ShortcutManager::from_config(&config.keybindings);
         let local_model_manager = LocalModelManager::new(&config.ai.backends.local);
         let ai_service = AiService::new(&config.ai, Some(&local_model_manager));
         let mut tabs = TabManager::new();
 
-        // Create the initial group with the default profile
+        // Create the initial group with the default profile, optionally
+        // overriding the working directory when launched via OS integration
+        // (e.g. "New Terminal Here" Quick Action, context menu, or file open).
         let mut initial_profile_key: Option<String> = None;
         let initial_group_id = if let Some((name, profile)) = config.default_profile() {
-            match tabs.new_group_with_tab(name, profile) {
+            let mut profile = profile.clone();
+            if let Some(dir) = &initial_dir {
+                // If a file path was passed (e.g. opening a .sh file), open in
+                // that file's parent directory rather than the file itself.
+                let working = if dir.is_file() {
+                    dir.parent()
+                        .map(|p| p.to_path_buf())
+                        .unwrap_or_else(|| dir.clone())
+                } else {
+                    dir.clone()
+                };
+                profile.working_directory = working;
+            }
+            match tabs.new_group_with_tab(name, &profile) {
                 Ok(id) => {
                     initial_profile_key = Some(name.to_string());
                     id
@@ -99,6 +117,7 @@ impl RidgebackApp {
             fps_frames: Vec::new(),
             fps_display: 0.0,
             last_shader_repaint: std::time::Instant::now(),
+            was_focused: true,
         }
     }
 
@@ -368,14 +387,41 @@ impl RidgebackApp {
 
 impl eframe::App for RidgebackApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let window_focused = ctx.input(|i| i.focused);
+        let update_in_bg   = self.config.rendering.update_in_background;
+
+        // Always drain PTY output so terminal state stays current, even when backgrounded.
+        let mut any_changed = false;
+        for tab in self.tabs.all_tabs_mut() {
+            if tab.terminal.process_pty_output() { any_changed = true; }
+        }
+
+        // eframe clears the framebuffer on every update() call regardless of
+        // what we draw, so returning early always produces a black frame.
+        // Instead we always render but control how often update() is called:
+        //   • Foreground: normal FPS-capped repaint scheduling.
+        //   • Background: only schedule a follow-up repaint when the PTY
+        //     actually had output (active process). When idle, no repaint is
+        //     scheduled — the compositor keeps the last presented frame at
+        //     zero GPU cost, and sporadic OS events (focus, resize…) will
+        //     still call update() and re-render as needed.
+        let in_background = !window_focused && !update_in_bg;
+        self.was_focused = window_focused;
+
         // ── Disable macOS IME ─────────────────────────────────────────────
         // When running as a .app bundle, macOS activates the full Input
         // Method framework which can inject spurious text events (e.g. a
         // space) alongside non-printable keys like Backspace. Since this
         // is a terminal emulator that handles raw key events directly, we
         // disable IME and set the purpose to Terminal.
-        ctx.send_viewport_cmd(egui::ViewportCommand::IMEAllowed(false));
-        ctx.send_viewport_cmd(egui::ViewportCommand::IMEPurpose(egui::viewport::IMEPurpose::Terminal));
+        //
+        // CRITICAL: send_viewport_cmd() internally calls request_repaint().
+        // Calling it when backgrounded would create an infinite repaint loop.
+        // Only send these when the window is actually focused.
+        if window_focused {
+            ctx.send_viewport_cmd(egui::ViewportCommand::IMEAllowed(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::IMEPurpose(egui::viewport::IMEPurpose::Terminal));
+        }
 
         // ── FPS tracking ──────────────────────────────────────────────────
         let now = std::time::Instant::now();
@@ -386,21 +432,16 @@ impl eframe::App for RidgebackApp {
         self.fps_display = self.fps_frames.len() as f32;
 
         if self.bg_texture.is_none() { self.bg_texture = load_background_texture(ctx); }
-        let window_focused = ctx.input(|i| i.focused);
-        let update_in_bg   = self.config.rendering.update_in_background;
         let dt = ctx.input(|i| i.unstable_dt).min(0.1);
         let still_animating = self.tabs.tick_animations(dt);
 
         // ── Shader FPS throttle ───────────────────────────────────────────
-        // Determine effective max FPS: 1 FPS when in background and
-        // update_in_background is off, otherwise the configured max.
-        let effective_max_fps = if !window_focused && !update_in_bg {
-            1u32
-        } else {
-            self.config.rendering.effective_shader_fps()
-        };
+        let effective_max_fps = self.config.rendering.effective_shader_fps();
         let shader_interval = std::time::Duration::from_secs_f64(1.0 / effective_max_fps as f64);
-        let allow_shader_repaint = now.duration_since(self.last_shader_repaint) >= shader_interval;
+        // Suppress shader/particle animations in background render frames —
+        // we only want the terminal text content to be current, not animated effects.
+        let allow_shader_repaint = !in_background
+            && now.duration_since(self.last_shader_repaint) >= shader_interval;
         if allow_shader_repaint {
             self.last_shader_repaint = now;
         }
@@ -408,10 +449,6 @@ impl eframe::App for RidgebackApp {
         // Clean up groups that became empty after close animations finished
         self.cleanup_empty_groups();
 
-        let mut any_changed = false;
-        for tab in self.tabs.all_tabs_mut() {
-            if tab.terminal.process_pty_output() { any_changed = true; }
-        }
         if let Some(action) = self.shortcuts.check(ctx) { self.handle_shortcut(ctx, action); }
         crate::particle_emit::set_host(Arc::clone(&self.shader_host));
 
@@ -674,22 +711,23 @@ impl eframe::App for RidgebackApp {
         self.toasts.show(ctx);
 
         // ── Repaint scheduling with FPS limiting ──────────────────────────
-        // ALL repaints go through request_repaint_after to enforce the max FPS cap.
-        // Using request_repaint() (immediate) would bypass the limit.
-        let has_active_particles = self.tabs.all_tabs_ref().any(|t|
-            !t.particles.particles.is_empty() || !t.particle_effects.is_empty()
-        );
-        let needs_repaint = any_changed || still_animating
-            || self.tabs.all_tabs_ref().any(|t| t.shader_effect.plugin_id != "none")
-            || has_active_particles
-            || self.tabs.any_active();
+        // All repaints use request_repaint_after — never immediate request_repaint().
+        if in_background {
+            // Only schedule a follow-up poll when a process was producing output.
+            // If idle, don't schedule anything — the compositor keeps the last
+            // frame and sporadic OS events will re-render if needed.
+            if any_changed {
+                ctx.request_repaint_after(std::time::Duration::from_millis(500));
+            }
+        } else {
+            let has_active_particles = self.tabs.all_tabs_ref().any(|t|
+                !t.particles.particles.is_empty() || !t.particle_effects.is_empty()
+            );
+            let needs_repaint = any_changed || still_animating
+                || self.tabs.all_tabs_ref().any(|t| t.shader_effect.plugin_id != "none")
+                || has_active_particles;
 
-        if needs_repaint {
-            if !window_focused && !update_in_bg {
-                // Background with update_in_background off: 1 FPS
-                ctx.request_repaint_after(std::time::Duration::from_secs(1));
-            } else {
-                // Enforce the configured max FPS for everything
+            if needs_repaint {
                 ctx.request_repaint_after(shader_interval);
             }
         }

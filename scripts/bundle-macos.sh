@@ -150,8 +150,64 @@ cat > "${CONTENTS_DIR}/Info.plist" <<PLIST
   <true/>
   <key>NSHumanReadableCopyright</key>
   <string>${COPYRIGHT}</string>
+
+  <!-- Appear in the Utilities category in Launchpad / App Store -->
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.utilities</string>
+
+  <!-- Shell-script document types — enables "Open With > Ridgeback" in Finder -->
   <key>CFBundleDocumentTypes</key>
-  <array/>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Shell Script</string>
+      <key>CFBundleTypeRole</key>
+      <string>Shell</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.shell-script</string>
+        <string>public.bash-script</string>
+        <string>public.zsh-script</string>
+        <string>com.apple.terminal.shell-script</string>
+      </array>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>sh</string>
+        <string>bash</string>
+        <string>zsh</string>
+        <string>fish</string>
+        <string>command</string>
+        <string>ps1</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Folder</string>
+      <key>CFBundleTypeRole</key>
+      <string>Shell</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.folder</string>
+      </array>
+    </dict>
+  </array>
+
+  <!-- ridgeback:// URL scheme for programmatic terminal launching -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>Ridgeback Terminal URL</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>ridgeback</string>
+      </array>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST
@@ -162,6 +218,9 @@ echo "✅ ${APP_NAME}.app created at: ${APP_DIR}"
 echo ""
 echo "   To install, copy to /Applications:"
 echo "     cp -r \"${APP_DIR}\" /Applications/"
+echo ""
+echo "   To register context menus and Quick Actions after installing:"
+echo "     /Applications/${APP_NAME}.app/Contents/MacOS/ridgeback --register"
 echo ""
 echo "   Contents:"
 ls -R "$APP_DIR"

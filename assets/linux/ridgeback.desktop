@@ -1,0 +1,19 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Ridgeback
+GenericName=Terminal Emulator
+Comment=A GPU-accelerated terminal emulator
+# %f passes the selected file/folder path; used when opening shell scripts
+# or when a file manager invokes "Open in Terminal" via a custom action.
+Exec=ridgeback --working-directory %f
+Icon=ridgeback
+Terminal=false
+Categories=System;TerminalEmulator;Utility;
+MimeType=application/x-sh;application/x-shellscript;text/x-sh;application/x-zsh;application/x-bash;
+StartupNotify=true
+Keywords=terminal;emulator;shell;console;
+
+[Desktop Action new-window]
+Name=New Terminal Window
+Exec=ridgeback

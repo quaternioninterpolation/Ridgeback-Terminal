@@ -621,7 +621,9 @@ fn draw_fire_base_overlay(
     );
 
     let _ = dt; // suppress unused
-    if allow_repaint { ui.ctx().request_repaint(); }
+    // No request_repaint() here — app.rs schedules request_repaint_after(shader_interval)
+    // for any tab with an active shader effect, which is the correct throttled path.
+    let _ = allow_repaint;
 }
 
 fn blend_fire_ramp(heat: f32, base: (u8,u8,u8), mid: (u8,u8,u8), top: (u8,u8,u8)) -> (u8,u8,u8) {

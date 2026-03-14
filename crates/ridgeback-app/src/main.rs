@@ -15,10 +15,46 @@ mod split_pane;
 mod group_tab_bar;
 mod particle_emit;
 mod crt_postprocess;
+mod registration;
 
 use anyhow::Result;
+use std::path::PathBuf;
 
 fn main() -> Result<()> {
+    // ── CLI argument parsing ──────────────────────────────────────────────
+    // Handled before eframe starts so registration commands can exit early.
+    let args: Vec<String> = std::env::args().collect();
+    let mut working_dir: Option<PathBuf> = None;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--register" => {
+                registration::register()?;
+                return Ok(());
+            }
+            "--unregister" => {
+                registration::unregister()?;
+                return Ok(());
+            }
+            "--working-directory" | "-w" => {
+                i += 1;
+                if let Some(path) = args.get(i) {
+                    working_dir = Some(PathBuf::from(path));
+                }
+            }
+            // Positional argument: treat a path as the working directory.
+            // macOS passes file paths here when opening shell-script files.
+            arg if !arg.starts_with('-') => {
+                let p = PathBuf::from(arg);
+                if p.exists() {
+                    working_dir = Some(p);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
     // Initialize tracing for structured logging
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -68,7 +104,7 @@ fn main() -> Result<()> {
 
             cc.egui_ctx.set_fonts(fonts);
 
-            Ok(Box::new(app::RidgebackApp::new(config)))
+            Ok(Box::new(app::RidgebackApp::new(config, working_dir)))
         }),
     )
     .map_err(|e| anyhow::anyhow!("eframe error: {}", e))?;

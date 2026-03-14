@@ -3960,7 +3960,7 @@ dependencies = [
  "shared_library",
  "shell-words",
  "winapi",
- "winreg",
+ "winreg 0.10.1",
 ]
 
 [[package]]
@@ -4450,7 +4450,7 @@ dependencies = [
 
 [[package]]
 name = "ridgeback-ai"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "async-openai",
@@ -4472,7 +4472,7 @@ dependencies = [
 
 [[package]]
 name = "ridgeback-app"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4495,11 +4495,12 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wgpu 23.0.1",
+ "winreg 0.52.0",
 ]
 
 [[package]]
 name = "ridgeback-config"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "directories",
@@ -4511,7 +4512,7 @@ dependencies = [
 
 [[package]]
 name = "ridgeback-core"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "directories",
@@ -4526,7 +4527,7 @@ dependencies = [
 
 [[package]]
 name = "ridgeback-gpu"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -4538,7 +4539,7 @@ dependencies = [
 
 [[package]]
 name = "ridgeback-plugin"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "directories",
@@ -6910,6 +6911,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "80d0f4e272c85def139476380b12f9ac60926689dd2e01d4923222f40580869d"
 dependencies = [
  "winapi",
+]
+
+[[package]]
+name = "winreg"
+version = "0.52.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a277a57398d4bfa075df44f501a17cfdf8542d224f0d36095a2adc7aee4ef0a5"
+dependencies = [
+ "cfg-if",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

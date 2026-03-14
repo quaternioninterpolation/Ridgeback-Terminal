@@ -33,6 +33,10 @@ serde_json = { workspace = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 ridgeback-ai = { path = "../ridgeback-ai", features = ["metal"] }
 
+# Windows registry access for context-menu and file-association registration
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.52"
+
 [build-dependencies]
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
